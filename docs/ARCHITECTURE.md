@@ -38,7 +38,7 @@ def spell(p) -> str:
 
 ## Arrangement (`music/arrange.py`, `music/io.py`)
 
-`arrange(show)` copies the show and sets `parts` for every section below, each a list of note tokens or `None` for a rest, one entry per melody beat. Call `validate_intent` and raise `ValueError` on problems. Parse chords with `music21.harmony.ChordSymbol`. If the symbol has no root, raise `ValueError`.
+`arrange(show)` copies the show and sets `parts` for every section below, each a list of note tokens or `None` for a rest, one entry per melody beat. Call `validate_intent` and raise `ValueError` on problems. Parse chords with `music21.harmony.ChordSymbol` after rewriting a flat root into music21's spelling (`Bb` becomes `B-`, `Eb` becomes `E-`). If the symbol has no root, raise `ValueError`. `ChordSymbol.third` and `.fifth` may already sit in some other octave (`F7`'s third comes back as `A2`). Build a new `Pitch` with that note name and force the octave in the table below. Do not keep the octave music21 picked.
 
 Voices, before transposition:
 
@@ -60,7 +60,7 @@ The pattern restarts every 4 beats. A 3/4 tune still uses the first three cells 
 
 `playback(show)` returns one object per section, in `SECTION_ORDER`. Each note is `{beat, midi, beats}` with `beats` 1. Omit rests. `beat` is the index in the part list.
 
-`export_musicxml` writes one score. Part order is `SECTION_ORDER`. `partName` values are Flute, Clarinet, Alto Sax, Tenor Sax, Trumpet, Mellophone, Trombone, Baritone, Tuba, Snare, Bass Drum. Key signature comes from `show["key"]`. Time signature from `meter`. Quarter notes, and rests where the token is `None`. `export_midi` writes a playable MIDI file of those same parts.
+`export_musicxml` writes one score. Part order is `SECTION_ORDER`. `partName` values are Flute, Clarinet, Alto Sax, Tenor Sax, Trumpet, Mellophone, Trombone, Baritone, Tuba, Snare, Bass Drum. Key signature comes from `show["key"]` via `music21.key.Key` (`Bb` is two flats, `sharps == -2`). Time signature from `meter`. Quarter notes, and rests where the token is `None`. `export_midi` writes a playable MIDI file of those same parts.
 
 `import_musicxml` reads the first part's notes into `melody` (rests dropped), copies that part's meter and key, and sets `chords` to `"C"` repeated once per measure. Other show fields can be the demo defaults. The result must pass `validate_intent` after a caller adds sets, or it may include the demo sets so a bare import is already a valid intent. Prefer copying `demo_show()` and replacing melody, key, meter, tempo (if present), and chords.
 

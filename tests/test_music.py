@@ -62,8 +62,8 @@ def test_musicxml_and_midi_round_trip(tmp_path: Path):
     tuba = list(score.parts[8].flatten().notes)
     assert tuba[0].pitch.midi == _midi("Bb2")
     assert tuba[4].pitch.midi == _midi("F2")
-    key = score.parts[0].flatten().getElementsByClass("KeySignature")[0]
-    assert key.sharps == -1
+    signature = score.parts[0].flatten().getElementsByClass("KeySignature")[0]
+    assert signature.sharps == -2
     imported = import_musicxml(xml_path)
     assert imported["melody"][0] == "Bb4"
     assert imported["meter"] == [4, 4]
