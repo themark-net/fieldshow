@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "title": "Gate Fanfare",
+  "author": "fieldshow",
+  "school": "",
+  "year": "2026",
+  "key": "Bb",
+  "meter": [4, 4],
+  "tempo": 132,
+  "melody": ["Bb4", "D5", "F5", "Bb5", "A5", "G5", "F5", "Eb5"],
+  "chords": ["Bb", "F7"],
+  "ensemble": "hs-wind-battery",
+  "counts_per_set": 8,
+  "sets": [
+    {
+      "name": "Hash line",
+      "shapes": [
+        {"section": "trumpet", "kind": "line", "from": [-16, 32], "to": [16, 32], "count": 5},
+        {"section": "tuba", "kind": "block", "origin": [-6, 12], "rows": 2, "cols": 2, "spacing": 2},
+        {"section": "snare", "kind": "line", "from": [-4, 20], "to": [4, 20], "count": 3}
+      ]
+    },
+    {
+      "name": "Spread",
+      "shapes": [
+        {"section": "trumpet", "kind": "arc", "center": [0, 28], "radius": 14, "start_deg": 200, "end_deg": 340, "count": 5},
+        {"section": "tuba", "kind": "line", "from": [-18, 8], "to": [18, 8], "count": 4},
+        {"section": "snare", "kind": "line", "from": [-6, 18], "to": [6, 18], "count": 3}
+      ]
+    }
+  ],
+  "design": {
+    "uniform": "Black jacket, gold sash",
+    "flag": "Gold field with a black diagonal",
+    "palette": ["#e8a838", "#14120e", "#f4efe4", "#8c3a3a"]
+  },
+  "field_image": null,
+  "performers": [],
+  "parts": {}
+}

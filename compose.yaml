@@ -1,0 +1,6 @@
+services:
+  fieldshow:
+    build: .
+    ports:
+      - "8876:8876"
+    restart: unless-stopped
