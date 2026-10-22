@@ -24,8 +24,9 @@ from fieldshow.web.app import create_app
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER_PYTEST = (
     "docker build -t fieldshow:t0005 . && "
-    'docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp fieldshow:t0005 '
-    'sh -c \'pip install --no-cache-dir -e ".[dev]" && pytest\''
+    'docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp --user "$(id -u):$(id -g)" fieldshow:t0005 '
+    'sh -c \'python -m venv /tmp/v --system-site-packages && . /tmp/v/bin/activate && '
+    'pip install -q --no-cache-dir -e ".[dev]" && pytest\''
 )
 
 

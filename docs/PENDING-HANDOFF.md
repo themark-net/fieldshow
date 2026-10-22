@@ -1,6 +1,6 @@
 # Pending handoff, 2026-10-22
 
-T-0005 is implemented on `build/t0005-part-pdfs` in this worktree. Nothing was pushed.
+T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; no PR, not merged to main). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
 
 ## What shipped
 
@@ -25,11 +25,11 @@ Image. This is the command the skip message prints. It ran green here: 18 passed
 
 ```bash
 docker build -t fieldshow:t0005 .
-docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp fieldshow:t0005 \
-  sh -c 'pip install --no-cache-dir -e ".[dev]" && pytest'
+docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp --user "$(id -u):$(id -g)" fieldshow:t0005 \
+  sh -c 'python -m venv /tmp/v --system-site-packages && . /tmp/v/bin/activate && pip install -q --no-cache-dir -e ".[dev]" && pytest'
 ```
 
-`fieldshow:t0005` is 236MB (`docker images`). `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
+`fieldshow:t0005` is about 278MB on disk, 192MB content (`docker images`). `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
 
 ## Decision
 
@@ -43,9 +43,28 @@ On Gate Fanfare, musicxml2ly kept every pitch, rhythm, clef, part name, key, tim
 - OQ-0003 pit, guard, and props
 - OQ-0004 step-size and collision warnings
 - OQ-0005 no login on the LAN page. Unchanged. No new port.
+- Battery parts (snare, bass drum) are engraved on a pitched treble staff with the key signature, because the arranger stores them as pitch tokens. A percussion clef / one-line staff is a follow-up (OQ-0003 territory).
+- MuseScore stays out of the image. If a later chart shows a musicxml2ly octave or rhythm loss, re-run the ADR 0004 comparison.
+
+## Verification
+
+Host: 16 passed, 2 skipped (engraving tests skip without LilyPond). Image `fieldshow:t0005`: 18 passed.
+
+Mutation proof (one at a time, restored after each):
+
+| Mutation | Result |
+| --- | --- |
+| Engrave loop only does `SECTION_ORDER[:1]` | red: `test_build_writes_one_real_pdf_per_part`, `test_page_links_each_part_pdf` |
+| PDF written as empty bytes | red: same two tests |
+| Missing-engraver guard removed (`if False:`) | red: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+| Missing engraver raises instead of recovering | red: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+
+## CI
+
+The repo has no `.github/workflows/`, so no CI runs on any push (`build/**` or `main`). Nothing was added; the tests above are the gate.
 
 The container still serves the sample intent until a built show is mounted. Paper links stay unavailable until `fieldshow build` has written `parts/` beside that file. An intent edit that changes the music clears the links until the next build.
 
 ## Deploy
 
-Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`: rsync the tree, then `docker compose up -d --build`. The engraver is in the image (`Dockerfile` installs `lilypond`). Expect the image to grow by the LilyPond stack described above. Do not rely on a host install of LilyPond. `QT_QPA_PLATFORM` is not required. LilyPond is not a Qt program.
+Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`: rsync the tree, then `docker compose up -d --build`. The engraver is in the image (`Dockerfile` installs `lilypond`). Expect the image to grow by the LilyPond stack described above. Do not rely on a host install of LilyPond. `QT_QPA_PLATFORM` is not required. LilyPond is not a Qt program. PDFs are produced by `fieldshow build`, not by the server: to serve linked parts on maximum, run the build (inside the image is fine) and bind-mount the directory holding `show.json` and its `parts/` (e.g. at `/data`, `FIELDSHOW_SHOW=/data/show.json`). Mounting only the JSON file leaves the parts marked unavailable.
