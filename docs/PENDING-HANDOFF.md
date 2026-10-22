@@ -89,15 +89,35 @@ Tester and Reviewer both FAILed `3c9fca0`: the parts engraved, and the tests did
 
 ### Verification
 
-Host `.venv` (engraving tests skip): `22 passed, 2 skipped, 1 warning in 24.38s`.
+Final run at `0585cf6`. The commit after it changes only this file, so `src/`, `tests/` and `Dockerfile` are identical at the pushed tip.
 
-Docker build: `naming to docker.io/library/fieldshow:t0005 done`, exit 0. Image `fieldshow:t0005` is 269 MB (`a1561f5ce90e`).
+Host `.venv` (engraving tests skip): `22 passed, 2 skipped, 1 warning in 24.27s`.
 
-In-image pytest, worktree mounted, `--user "$(id -u):$(id -g)"`, `PYTHONPATH=/work/src`: `24 passed, 1 warning in 39.43s`. The warning is the existing Starlette note about httpx. Import path was `/work/src/fieldshow/music/engrave.py`.
+Docker build `docker build -t fieldshow:t0005 .`, exit 0:
+
+```
+#13 naming to docker.io/library/fieldshow:t0005 done
+#13 unpacking to docker.io/library/fieldshow:t0005 1.5s done
+#13 DONE 7.1s
+```
+
+Image `a713319b9a54`, 227 MB. In-image pytest, worktree mounted read-only, `--user "$(id -u):$(id -g)"`, `PYTHONPATH=/work/src`, pytest and httpx from a throwaway venv under `/tmp`:
+
+```
+24 passed, 1 warning in 39.49s
+```
+
+The warning is the existing Starlette note about httpx. No root-owned files were left in the worktree.
+
+Spot mutants, each in a scratch copy run in the image at `0585cf6` (clean copy `24 passed`):
+
+- Route serves `flute.pdf` for every section: `2 failed` (`test_page_links_each_part_pdf`, `test_part_pdf_route_rejects_null_tamper_and_escape`: `b'%flute-real' == b'%baritone-good'`).
+- `SECTION_ORDER` check and `is_relative_to(parts/)` removed: `1 failed` (`test_part_pdf_route_rejects_null_tamper_and_escape`, line 365).
+- `os.killpg` replaced by `proc.kill()`: `1 failed` (`test_engrave_timeout_kills_grandchild`: "build hung; the engraver timeout did not stop the part").
 
 ### Mutants
 
-`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. 35 rows, 0 survived. Aliases that share a patch share the failing tests. M3 and M6 are EQUIVALENT: the stored string is not opened, and the dead `dest.unlink()` is gone. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
+`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. 35 rows, 0 survived (re-run by DevBot at `2ca2278`, same `src/` and `tests/` as the tip: 33 CAUGHT, 2 EQUIVALENT). Aliases that share a patch share the failing tests. M3 and M6 are EQUIVALENT: the stored string is not opened, and the dead `dest.unlink()` is gone. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
 
 | Mutant | Result | Failing tests |
 | --- | --- | --- |
