@@ -29,7 +29,7 @@ docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp --user "$(id -u):$(id -g)"
   sh -c 'python -m venv /tmp/v --system-site-packages && . /tmp/v/bin/activate && pip install -q --no-cache-dir -e ".[dev]" && pytest'
 ```
 
-`fieldshow:t0005` is 227MB on disk, 200MB content (`docker images` on nimo, image `3237f51ba193`, Round 3). Earlier notes said 278MB; that was a different measurement and is wrong for this image. `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
+`fieldshow:t0005` is 227MB on disk, 200MB content (`docker images` on nimo, image `8eed5de8eaa1`, Round 3). Earlier notes said 278MB; that was a different measurement and is wrong for this image. `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
 
 ## Decision
 
@@ -153,3 +153,60 @@ Spot mutants, each in a scratch copy run in the image at `0585cf6` (clean copy `
 - Arranger range and transposition, filed separately by PM: transposed parts carry the concert key signature, tenor sax is in bass clef at the wrong octave, alto sax A3 is below range, mellophone reaches F6, battery is on a pitched staff.
 - No CI workflow. PM follow-up. Nothing under `.github/` was added.
 - `field_image` can still be an arbitrary file read through `apply_intent` and `GET /api/field-image`. Pre-existing. PM files it separately. Not touched here.
+
+## Round 3
+
+Tester PASSed `ef48820`. Reviewer FAILed it (`verdict-ef488208.md`). Small respin done directly, no Grok run. Pushed with a normal push. No PR, no merge, no CI workflow.
+
+### What changed
+
+- **B1, route guards pinned.** `test_part_pdf_route_404s_when_the_file_is_missing_or_looping`: marker `parts/trumpet.pdf` with no file (the "mounted only the JSON" deploy) and a symlink loop `parts/tuba.pdf -> tuba.pdf` both 404, and a good baritone still serves its bytes. `test_part_pdf_route_404s_when_parts_dir_is_unreadable`: `parts/` at mode 0 is 404 (skipped as root). The image run found that Python 3.12 `Path.resolve()` raises `RuntimeError` on a loop (3.13+ raise `OSError`), so the tip returned 500 there; `_part_pdf_file` now also catches `RuntimeError`.
+- **B2, `parts/` must stay inside the show dir.** `_part_pdf_file` also requires `parts_dir.is_relative_to(Path(show_dir).resolve())`. `test_part_pdf_route_404s_when_parts_dir_points_outside_the_show`: `show/parts` symlinked to `elsewhere/` is 404 and never serves `ELSEWHERE-OUTSIDE-SHOWDIR`.
+- **S1.** `docs/ops/deploy-maximum.md` rebuild step ends with `docker compose up -d --force-recreate fieldshow` and says why (`serve` reads the JSON once). The rsync excludes are anchored (`/tmp`, `/compose.override.yaml`).
+- **S2.** `FIELDSHOW_ENGRAVE_TIMEOUT` is parsed at the top of `engrave_parts`, before `_clear_part_pdfs`, and passed down to `_run`. Not a positive finite number is a `ValueError`; the CLI prints one line and exits 2. `test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs`: with `abc`, exit 2, the message, no traceback, the old 11 PDFs byte-identical, and the old `show.json` untouched.
+- **Tester SF1.** `test_each_part_export_carries_its_own_pitches`: each one-staff export (the MusicXML LilyPond engraves) has that section's part name and exactly that section's MIDI pitches from the arranged show. Flute and tuba differ, so a "flute notes under every name" mutant cannot pass.
+- **Tester SF2 (optional, done).** `test_musicxml2ly_exit_status_fails_the_part`: the converter writes its `.ly` and exits 3, LilyPond would succeed; every part is null, `part_errors` says `musicxml2ly exited 3`, no PDF on disk.
+- **Handoff fixes.** Image size above is the real one. Mutant table count recounted (25 rows, 35 names with aliases, 23 distinct patches). M6 relabelled "not observable" per the Reviewer nit.
+
+### Verification
+
+Run at `2628bb4`. The commit after it changes only this file.
+
+Host `.venv` (Python 3.14, engraving tests skip): `28 passed, 2 skipped, 1 warning in 24.98s`.
+
+Docker build `docker build -t fieldshow:t0005 .`, exit 0:
+
+```
+#13 naming to docker.io/library/fieldshow:t0005 done
+#13 unpacking to docker.io/library/fieldshow:t0005 1.4s done
+#13 DONE 7.3s
+```
+
+Image `8eed5de8eaa1`, 227MB disk, 200MB content. In-image pytest (Python 3.12), worktree read-only, `--user "$(id -u):$(id -g)"`, `PYTHONPATH=/work/src`, pytest and httpx from a throwaway venv under `/tmp`:
+
+```
+30 passed, 1 warning in 40.25s
+```
+
+No root-owned files left in the worktree.
+
+### Round 3 mutants
+
+`tmp/mutants/run_r3.sh` (gitignored): each patch in a scratch copy, pytest in `fieldshow:t0005` as the host uid. Clean copy: `30 passed`. 7 mutants, 7 CAUGHT.
+
+| Mutant | Result | Failing tests and red line |
+| --- | --- | --- |
+| G3 drop `or not path.is_file()` | CAUGHT | `test_part_pdf_route_404s_when_the_file_is_missing_or_looping` (`:542 assert 500 == 404`), `test_part_pdf_route_404s_when_parts_dir_is_unreadable` (`:558 assert 500 == 404`) |
+| G5 drop `ValueError, OSError` from the except | CAUGHT | `test_part_pdf_route_404s_when_parts_dir_is_unreadable` (`:558 assert 500 == 404`) |
+| G5b drop `RuntimeError` from the except | CAUGHT | `test_part_pdf_route_404s_when_the_file_is_missing_or_looping` (`:543 assert 500 == 404`) |
+| B2 drop `parts_dir.is_relative_to(show_root)` | CAUGHT | `test_part_pdf_route_404s_when_parts_dir_points_outside_the_show` (`:570 assert 200 == 404`) |
+| S2 parse the timeout after `_clear_part_pdfs` | CAUGHT | `test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs` |
+| SF1 `io.py` every part uses `parts.get("flute")` | CAUGHT | `test_each_part_export_carries_its_own_pitches` (`:610 AssertionError: clarinet`), `test_music.py::test_musicxml_and_midi_round_trip` (`:60 assert 70 == 72`) |
+| SF2 drop `converted.returncode != 0` | CAUGHT | `test_musicxml2ly_exit_status_fails_the_part` (`:630 'musicxml2ly exited 3' in ''`) |
+
+### Parked (Round 3)
+
+- Tester SF4, a separate poppler test stage in the Dockerfile: parked. poppler-utils stays in the runtime image for the in-image test run.
+- Reviewer nit, evidence logs written by a slightly different script than the README command: not changed.
+- Still parked from Round 2: HEAD 405, arranger range and transposition, `field_image` read, no CI workflow.
+
