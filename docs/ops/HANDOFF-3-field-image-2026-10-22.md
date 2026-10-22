@@ -40,7 +40,45 @@ There is one refused-value table, `BAD`, with 28 rows. `_plant()` puts a real fi
 
 ## Mutants (round 2)
 
-MUTANTS_R2
+Each mutant ran in a fresh `git archive HEAD` copy, in `fieldshow:t0005` as the host uid, 4 at a time. The worktree was never patched. The runner is `tmp/mutants/run_3r2.py` (gitignored). The logs on nimo are `/tmp/fs-3r2-mutants-pass1.log` (all 31, at `27046a5`) and `/tmp/fs-3r2-mutants-b.log` (re-run at `27b72b1`: CLEAN 100 passed, both `is_file` mutants, E-VE).
+
+**31 mutants: 30 CAUGHT, 1 SURVIVED (E-VE, equivalent), 0 other survivors.** Pass 1 had 3 survivors: S-isfile drop, S-isfile→exists, and E-VE. The new `open()` readability check also refuses a directory (IsADirectoryError), so `is_file` was pinned only by something `open()` does not refuse. A FIFO is that case: opening one blocks. `test_a_fifo_named_like_an_image_is_refused_without_blocking` kills both, as confirmed in the re-run.
+
+As root (a separate in-image run, as uid 0), S-readable drop `open()` also goes red: `[images/unread.png]` fails at intent and at tamper through the 65534 fork. So the root path is not a no-op.
+
+| Mutant | Result | Failed | First failing tests |
+|---|---|---|---|
+| I1 drop apply_intent raise | CAUGHT | 1 | test_apply_intent_itself_refuses_a_bad_field_image |
+| I2 drop handler file check | CAUGHT | 4 | test_intent_rejects_field_image_outside_images[images/out.png]; test_intent_rejects_field_image_outside_images[images/missing.png] |
+| I-both | CAUGHT | 29 | test_intent_rejects_field_image_outside_images[../secret.png]; test_intent_rejects_field_image_outside_images[images/../../secret.png] |
+| I3 no ValueError->422 | CAUGHT | 24 | test_intent_rejects_field_image_outside_images[../secret.png]; test_intent_rejects_field_image_outside_images[images/../../secret.png] |
+| S-serve raw path | CAUGHT | 37 | test_intent_rejects_field_image_outside_images[../secret.png]; test_intent_rejects_field_image_outside_images[images/../../secret.png] |
+| S-regex drop serve re-check | CAUGHT | 15 | test_serve_404s_a_tampered_field_image_in_the_show_json[ABS_LEGIT]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/./field.png] |
+| S-contain drop is_relative_to(images) | CAUGHT | 2 | test_intent_rejects_field_image_outside_images[images/out.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/out.png] |
+| S-root drop images-in-root | CAUGHT | 1 | test_serve_404s_when_images_dir_points_outside_the_show |
+| S-isfile drop | CAUGHT (survived pass 1; the FIFO test was added) | 1 | test_a_fifo_named_like_an_image_is_refused_without_blocking |
+| S-isfile exists() | CAUGHT (survived pass 1; the FIFO test was added) | 1 | test_a_fifo_named_like_an_image_is_refused_without_blocking |
+| S-readable drop open() | CAUGHT | 2 | test_intent_rejects_field_image_outside_images[images/unread.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/unread.png] |
+| E-all except->ZeroDivision | CAUGHT | 3 | test_intent_rejects_field_image_outside_images[images/unread.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/unread.png] |
+| E-VE drop ValueError | SURVIVED (equivalent: NUL is the only ValueError source and the regex refuses it first) | 0 | - |
+| E-OS drop OSError | CAUGHT | 3 | test_intent_rejects_field_image_outside_images[images/unread.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/unread.png] |
+| E-RT drop RuntimeError | CAUGHT | 1 | test_serve_404s_on_a_symlink_loop_or_unreadable_images_dir |
+| Roots drop show_dir | CAUGHT | 32 | test_intent_rejects_field_image_outside_images[../secret.png]; test_intent_rejects_field_image_outside_images[images/../../secret.png] |
+| Roots drop upload dir | CAUGHT | 2 | test_upload_is_stored_as_a_marker_and_served; test_web.py::test_page_and_frame_share_one_show |
+| R-search | CAUGHT | 6 | test_intent_rejects_field_image_outside_images[ABS_LEGIT]; test_intent_rejects_field_image_outside_images[images/x.png\n] |
+| R-match | CAUGHT | 4 | test_intent_rejects_field_image_outside_images[images/x.png\n]; test_intent_rejects_field_image_outside_images[images/x.png.txt] |
+| R-match-dollar | CAUGHT | 2 | test_intent_rejects_field_image_outside_images[images/x.png\n]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/x.png\n] |
+| R-dots-in-name | CAUGHT | 4 | test_intent_rejects_field_image_outside_images[images/x.txt.png]; test_intent_rejects_field_image_outside_images[images/a.b.png] |
+| R-slash-in-name | CAUGHT | 2 | test_intent_rejects_field_image_outside_images[images/sub/x.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/sub/x.png] |
+| R-any-name | CAUGHT | 17 | test_intent_rejects_field_image_outside_images[images/./field.png]; test_intent_rejects_field_image_outside_images[images/x/../field.png] |
+| R-len-unbounded | CAUGHT | 2 | test_intent_rejects_field_image_outside_images[images/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.png] |
+| R-ext-any | CAUGHT | 7 | test_intent_rejects_field_image_outside_images[images/x.svg]; test_intent_rejects_field_image_outside_images[images/x.json] |
+| R-ext-txt-allowed | CAUGHT | 5 | test_intent_rejects_field_image_outside_images[images/x.json]; test_intent_rejects_field_image_outside_images[images/field.txt] |
+| R-no-ignorecase | CAUGHT | 1 | test_boundary_names_are_accepted_and_served[images/x.PNG] |
+| R-no-ascii | CAUGHT | 3 | test_intent_rejects_field_image_outside_images[images/\u212a.png]; test_serve_404s_a_tampered_field_image_in_the_show_json[images/\u212a.png] |
+| U drop upload 415 | CAUGHT | 1 | test_non_image_upload_is_415_and_leaves_the_show |
+| C import base = cwd | CAUGHT | 1 | test_cli_import_image_writes_beside_the_output_not_cwd |
+| T-nan timeout <= 0 | CAUGHT | 3 | test_part_pdfs.py::test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs[abc]; test_part_pdfs.py::test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs[inf] |
 
 Round 1's "All CAUGHT" covered only its own 8 mutants. The Reviewer ran 29 and found 13 survivors: I1, `is_file`→`exists`, E-RT on 3.13, E-VE, 8 regex mutants, and the CLI cwd mutant. All of them are in the table above.
 
@@ -57,4 +95,10 @@ Round 1's "All CAUGHT" covered only its own 8 mutants. The Reviewer ran 29 and f
 
 ## Evidence
 
-EVIDENCE_R2
+Run on nimo at `27b72b1`. That is the last code and test commit; the commit after it changes docs only.
+
+- `docker build -t fieldshow:t0005 .`: exit 0, image id `sha256:290a7eac8bd6a0cdace1f4edf36a562af63d1422dbc345fb863b12dee9bfcf5f`. The log is `/tmp/fs-3r2-build.log`.
+- In-image pytest (`fieldshow:t0005`, Python 3.12, host uid, `:ro` mount): `100 passed, 1 warning in 42.61s`
+- In-image as root, `tests/test_field_image.py`: `65 passed, 1 skipped`. The skip is the chmod half of the images-dir test (`root ignores directory permissions`). The unreadable-file rows ran through the 65534 fork and passed.
+- Host pytest (Python 3.14): `98 passed, 2 skipped, 1 warning in 26.88s`. The 2 skips are the LilyPond engraving tests.
+- Files in the worktree not owned by the host uid: 0.
