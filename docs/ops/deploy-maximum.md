@@ -2,23 +2,26 @@
 
 Host: `maximum`, `10.42.0.238`, user `mark`. Docker is already installed. The service listens on port 8876.
 
+Every command below logs in as `mark@maximum`. The `~` paths, `/home/mark/fieldshow-data` and the `--user "$(id -u):$(id -g)"` passed to `docker compose run` all assume that user, so do not shorten it to a host alias that might log in as someone else.
+
 `maximum` does not have the `githu` GitHub key, so `git clone` there fails. Deploy from nimo. Copy a clean export of the target commit, never a working tree: a working tree carries `tmp/` worktrees, mutant scratch and local edits.
 
 ## Clean export (nimo)
 
 ```bash
-SHA=<target sha>
-git -C ~/DEVELOP/fieldshow fetch origin
-rm -rf /tmp/fieldshow-deploy-$SHA && mkdir /tmp/fieldshow-deploy-$SHA
-git -C ~/DEVELOP/fieldshow archive "$SHA" | tar -x -C /tmp/fieldshow-deploy-$SHA
+SHA=$(git -C ~/DEVELOP/fieldshow fetch origin && git -C ~/DEVELOP/fieldshow rev-parse --short=7 <target ref>)
+rm -rf "/tmp/fieldshow-deploy-$SHA" && mkdir "/tmp/fieldshow-deploy-$SHA" &&
+git -C ~/DEVELOP/fieldshow archive "$SHA" | tar -x -C "/tmp/fieldshow-deploy-$SHA"
 ```
+
+`SHA` is the 7-character short SHA. Update and Rollback below use it in tag and backup names, and Update records it in `~/fieldshow-data/DEPLOYED_SHA`.
 
 ## First-time setup (maximum)
 
 Do this once, before the first `up`.
 
 ```bash
-ssh maximum 'mkdir -p ~/fieldshow /home/mark/fieldshow-data && cat > ~/fieldshow/compose.override.yaml' <<'YAML'
+ssh mark@maximum 'mkdir -p ~/fieldshow /home/mark/fieldshow-data && cat > ~/fieldshow/compose.override.yaml' <<'YAML'
 services:
   fieldshow:
     volumes:
@@ -26,52 +29,87 @@ services:
     environment:
       FIELDSHOW_SHOW: /data/show.json
 YAML
-rsync -az --delete --exclude /compose.override.yaml /tmp/fieldshow-deploy-$SHA/ maximum:fieldshow/
-ssh maximum 'cp ~/fieldshow/examples/fanfare.json ~/fieldshow-data/intent.json'
+rsync -az --delete --exclude /compose.override.yaml "/tmp/fieldshow-deploy-$SHA/" mark@maximum:fieldshow/ &&
+ssh mark@maximum 'cp ~/fieldshow/examples/fanfare.json ~/fieldshow-data/intent.json'
 ```
 
-`compose.override.yaml` is not in git. `--exclude /compose.override.yaml` keeps `--delete` from removing it. `--delete` does remove every other untracked leftover in `~/fieldshow` on maximum, so keep nothing else there. Then seed `show.json` from the example and start the service:
+`compose.override.yaml` is not in git. `--exclude /compose.override.yaml` keeps `--delete` from removing it. `--delete` does remove every other untracked leftover in `~/fieldshow` on maximum, so keep nothing else there: anything you need to keep (backups, a moved-aside override) goes in `~/fieldshow-data`. Then build `show.json` from the intent, start the service and record what is running:
 
 ```bash
-ssh maximum 'cd ~/fieldshow && docker compose build fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow \
-  fieldshow build /data/intent.json -o /data/show.json && docker compose up -d --force-recreate fieldshow'
+ssh mark@maximum 'cd ~/fieldshow && docker compose build fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow \
+  fieldshow build /data/intent.json -o /data/show.json && docker compose up -d --no-build --force-recreate fieldshow' &&
+ssh mark@maximum "echo '$SHA' > ~/fieldshow-data/DEPLOYED_SHA" &&
 curl -fsS http://10.42.0.238:8876/api/health
 ```
 
 ## Update
 
-Before you replace anything, tag the running image and back up the built show, so there is something to roll back to. Both use the replaced commit's short SHA (`pre-<sha>`):
+Before you replace anything, tag the running image and back up the built show, so there is something to roll back to. The replaced SHA comes from `~/fieldshow-data/DEPLOYED_SHA`. Both the tag and the backups are named `pre-<replaced>-to-<new>`, for example `fieldshow:pre-e786df3-to-<new>` with `show.json.pre-e786df3-to-<new>` and `parts.pre-e786df3-to-<new>`:
 
 ```bash
-OLD=<short sha now running on maximum>
-ssh maximum "cd ~/fieldshow && docker tag \$(docker compose images -q fieldshow) fieldshow:pre-$OLD"
-ssh maximum "cd ~/fieldshow-data && cp -p show.json show.json.pre-$OLD && rm -rf parts.pre-$OLD && cp -a parts parts.pre-$OLD"
-rsync -az --delete --exclude /compose.override.yaml /tmp/fieldshow-deploy-$SHA/ maximum:fieldshow/
-ssh maximum 'cd ~/fieldshow && docker compose build fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow fieldshow build /data/intent.json -o /data/show.json && docker compose up -d --no-build --force-recreate fieldshow'
+OLD=$(ssh mark@maximum 'cat ~/fieldshow-data/DEPLOYED_SHA') && [ -n "$OLD" ] && [ "$OLD" != "$SHA" ] && B="$OLD-to-$SHA" &&
+ssh mark@maximum "cd ~/fieldshow && { docker image inspect fieldshow:pre-$B >/dev/null 2>&1 || docker tag \"\$(docker compose images -q fieldshow)\" fieldshow:pre-$B; }" &&
+ssh mark@maximum "cd ~/fieldshow-data && { [ -e show.json.pre-$B ] || { rm -rf parts.pre-$B && cp -a parts parts.pre-$B && cp -p show.json show.json.pre-$B; }; }" &&
+rsync -az --delete --exclude /compose.override.yaml "/tmp/fieldshow-deploy-$SHA/" mark@maximum:fieldshow/ &&
+ssh mark@maximum 'cd ~/fieldshow && docker compose build fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow fieldshow build /data/intent.json -o /data/show.json && docker compose up -d --no-build --force-recreate fieldshow' &&
+ssh mark@maximum "echo '$SHA' > ~/fieldshow-data/DEPLOYED_SHA" &&
 curl -fsS http://10.42.0.238:8876/api/health
 ```
 
-`fieldshow build` overwrites `show.json` and `parts/`, which is why the backup comes first. The update reruns `fieldshow build` because `serve` only reads `/data/show.json`. Without the build, the new image serves the old `show.json` and the old part PDFs. The old container keeps serving until the final `up -d --no-build --force-recreate fieldshow`. The build and the `run --rm` do not touch it.
+The lines are chained with `&&`, so the first failure stops the rest. It stops at once if `DEPLOYED_SHA` is missing or already equals `$SHA` (nothing to do), and the tag fails if no container is running (`images -q` prints nothing).
 
-If `docker compose build` fails while pulling from Docker Hub with `network is unreachable`, maximum's IPv6 route is flaky. Rerun the same command. The old container is still serving.
+The block is safe to rerun with the same `SHA`. The tag is skipped if `fieldshow:pre-$B` exists and the backup is skipped if `show.json.pre-$B` exists, so a rerun never overwrites the rollback point with the new image or the new show. `show.json.pre-$B` is copied last, so it only exists once `parts.pre-$B` is complete. `DEPLOYED_SHA` changes only after the recreate succeeds; after that a rerun stops at the first line.
+
+`DEPLOYED_SHA` was added after `e786df3` went out. If it is missing on maximum, seed it once with the SHA that is running (`e786df3` today): `ssh mark@maximum "echo e786df3 > ~/fieldshow-data/DEPLOYED_SHA"`.
+
+`fieldshow build` overwrites `show.json` and `parts/`, which is why the backup comes first. The update reruns `fieldshow build` because `serve` only reads `/data/show.json`. Without the build, the new image serves the old `show.json` and the old part PDFs. The build does not touch `images/`, but it rebuilds `field_image` from `intent.json` (see Field picture below).
+
+The old container keeps running until the final `up -d --no-build --force-recreate fieldshow`; the build and the `run --rm` do not stop it. For the few seconds between the `run` and the recreate it serves its old in-memory `show.json` with the new part PDFs, which it reads from disk on each request. Avoid updating while a rehearsal is reading parts.
+
+If `docker compose build` fails while pulling from Docker Hub with `network is unreachable`, maximum's IPv6 route is flaky. Rerun the same block. The old container is still serving, and the tag and backup are kept as they are.
 
 ## Rollback
 
-The current rollback image is `fieldshow:pre-a803da2` (`sha256:0f631c29aa48...`). Sysadmin tagged it, and it is not `fieldshow-fieldshow:pre-<stamp>`. New tags follow `fieldshow:pre-<replaced short SHA>`, as in Update above.
+Current rollback target (from Sysadmin, before this naming scheme): image `fieldshow:pre-a803da2-to-e786df3` (`sha256:e0e247aeb14e...`, the `a803da2` image) with data `~/fieldshow-data/show.json.pre-e786df3` (the show `a803da2` built). There is no `parts.pre-*` backup for it.
 
-Restore the show built by the old image as well as the image itself. The new build has already overwritten `/data/show.json` and `parts/`:
+Older fallback: `fieldshow:pre-a803da2` (`sha256:0f631c29aa48...`) is the image from before `a803da2` (about `6a4b4c8`, before T-0005). It has no `/data` mount support and cannot serve part PDFs. Use it only if the `a803da2` image is unusable; see the last paragraph.
+
+Roll back to the current target:
 
 ```bash
-OLD=<sha of the pre-* tag>   # a803da2 today
-ssh maximum 'docker image ls fieldshow'   # pick the pre-* tag
-ssh maximum "cd ~/fieldshow-data && cp -p show.json.pre-$OLD show.json && rm -rf parts && cp -a parts.pre-$OLD parts"
-ssh maximum "cd ~/fieldshow && docker tag fieldshow:pre-$OLD \"\$(docker compose config --images fieldshow)\" && docker compose up -d --no-build --force-recreate fieldshow"
+ssh mark@maximum 'docker image ls fieldshow' &&
+ssh mark@maximum 'cd ~/fieldshow-data && cp -p show.json.pre-e786df3 show.json' &&
+ssh mark@maximum 'cd ~/fieldshow && docker tag fieldshow:pre-a803da2-to-e786df3 "$(docker compose config --images fieldshow)" && docker compose up -d --no-build --force-recreate fieldshow' &&
+ssh mark@maximum "echo a803da2 > ~/fieldshow-data/DEPLOYED_SHA" &&
 curl -fsS http://10.42.0.238:8876/api/health
 ```
 
-`docker compose config --images fieldshow` prints the image name Compose runs for the service, so the retag points that name at the old image. `--no-build` makes `up` run the image under that name exactly as tagged. If the name were missing it would fail rather than quietly build a fresh image from the new source on disk. The `show.json.pre-a803da2` backup exists only if it was taken before that update. If there is none, rerun the old image's `fieldshow build` (the `docker compose run` line in Update, without `docker compose build`) after the retag. Re-rsync the old SHA's export later, so the source on maximum matches the running image again.
+With no parts backup, `parts/` keeps the PDFs `e786df3` engraved. For the same `intent.json` the parts are the same, so this is fine. If `intent.json` changed since, rebuild with the old image: run the `docker compose run ... fieldshow build` line from Update (without `docker compose build`) after the retag, then recreate.
 
-Images from before `a803da2` cannot serve part PDFs, and they may not start against the `/data` override. For a full return to the old setup, first move the override aside (`mv ~/fieldshow/compose.override.yaml ~/fieldshow/compose.override.yaml.off`), then recreate.
+Roll back an update made with the block above, from the tag `fieldshow:pre-<OLD>-to-<NEW>`:
+
+```bash
+ssh mark@maximum 'docker image ls fieldshow' &&   # pick the pre-<OLD>-to-<NEW> tag
+OLD=<OLD> && B="$OLD-to-<NEW>" &&
+ssh mark@maximum "cd ~/fieldshow-data && cp -p show.json.pre-$B show.json && rm -rf parts && cp -a parts.pre-$B parts" &&
+ssh mark@maximum "cd ~/fieldshow && docker tag fieldshow:pre-$B \"\$(docker compose config --images fieldshow)\" && docker compose up -d --no-build --force-recreate fieldshow" &&
+ssh mark@maximum "echo '$OLD' > ~/fieldshow-data/DEPLOYED_SHA" &&
+curl -fsS http://10.42.0.238:8876/api/health
+```
+
+`docker compose config --images fieldshow` prints the image name Compose runs for the service, so the retag points that name at the old image. `--no-build` makes `up` run the image under that name exactly as tagged. If the name were missing it would fail rather than quietly build a fresh image from the new source on disk. Re-rsync the old SHA's export later, so the source on maximum matches the running image again. Rollback leaves the `pre-*` tag and backups in place, so it is safe to rerun.
+
+Only for the older `fieldshow:pre-a803da2` fallback: images from before `a803da2` may not start against the `/data` override. Move the override out of `~/fieldshow` (inside it, the next `rsync --delete` would remove it), retag that image as above, and recreate:
+
+```bash
+ssh mark@maximum 'mv ~/fieldshow/compose.override.yaml ~/fieldshow-data/compose.override.yaml.off && cd ~/fieldshow && docker tag fieldshow:pre-a803da2 "$(docker compose config --images fieldshow)" && docker compose up -d --no-build --force-recreate fieldshow'
+```
+
+To undo it, put the override back and recreate with a current image (retag one, or run Update):
+
+```bash
+ssh mark@maximum 'mv ~/fieldshow-data/compose.override.yaml.off ~/fieldshow/compose.override.yaml && cd ~/fieldshow && docker compose up -d --no-build --force-recreate fieldshow'
+```
 
 ## Using it
 
@@ -84,8 +122,8 @@ The intent lives at `~/fieldshow-data/intent.json` on `maximum`. The first-time 
 LilyPond is in the image. Build the show and its parts with the same image, then restart the service:
 
 ```bash
-ssh maximum 'cd ~/fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow \
-  fieldshow build /data/intent.json -o /data/show.json && docker compose up -d --force-recreate fieldshow'
+ssh mark@maximum 'cd ~/fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow \
+  fieldshow build /data/intent.json -o /data/show.json && docker compose up -d --no-build --force-recreate fieldshow'
 curl -fsS http://10.42.0.238:8876/api/part-pdf/trumpet -o /dev/null -w '%{http_code} %{content_type}\n'
 ```
 
@@ -95,13 +133,19 @@ Expect `200 application/pdf`. A `404` means `parts/` is not beside the mounted `
 
 Stop: `docker compose down`. This does not remove the image.
 
-A field picture goes in the same directory. Copy it into `~/fieldshow-data` first (the container only sees `/data`), import it with the image, then recreate the service:
+### Field picture
+
+`fieldshow build` rebuilds `show.json` from `intent.json`, so every rebuild (Update, or the build above) sets `field_image` to whatever `intent.json` says. Importing into `show.json` alone is lost at the next build: `images/field.<ext>` stays on disk but `/api/field-image` returns 404. The durable way is to import into `intent.json`, then build. `import-image` takes any show or intent JSON, writes `images/field.<ext>` beside its `-o` file and sets `field_image` to `images/field.<ext>`, which is the marker `intent.json` accepts.
+
+Copy the picture into `~/fieldshow-data` first (the container only sees `/data`), import it into the intent, rebuild, recreate, and remove the copied source:
 
 ```bash
-scp field.png maximum:fieldshow-data/field-src.png
-ssh maximum 'cd ~/fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow \
-  fieldshow import-image /data/show.json /data/field-src.png -o /data/show.json && docker compose up -d --no-build --force-recreate fieldshow'
+scp field.png mark@maximum:fieldshow-data/field-src.png &&
+ssh mark@maximum 'cd ~/fieldshow && docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow \
+  fieldshow import-image /data/intent.json /data/field-src.png -o /data/intent.json && \
+  docker compose run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp fieldshow fieldshow build /data/intent.json -o /data/show.json && \
+  docker compose up -d --no-build --force-recreate fieldshow && rm ~/fieldshow-data/field-src.png' &&
 curl -fsS http://10.42.0.238:8876/api/field-image -o /dev/null -w '%{http_code} %{content_type}\n'
 ```
 
-`import-image` writes `/data/images/field.<ext>` and stores `images/field.<ext>`. Expect `200 image/png`.
+Expect `200 image/png`. To set it by hand instead, put the file at `~/fieldshow-data/images/field.png` and set `"field_image": "images/field.png"` in `~/fieldshow-data/intent.json`, then rebuild. The alternative, `import-image /data/show.json ... -o /data/show.json` after each build, works until the next build.

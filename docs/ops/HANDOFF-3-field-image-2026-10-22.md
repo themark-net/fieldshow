@@ -90,7 +90,7 @@ Round 1's "All CAUGHT" covered only its own 8 mutants. The Reviewer ran 29 and f
 ## Parked
 
 - Main is at `e786df3` (fast-forward after the double PASS). Redeploying maximum belongs to Sysadmin and the parent; follow `docs/ops/deploy-maximum.md`.
-- `deploy-maximum.md` gained first-time setup, a clean `git archive` export, and rollback via a `pre-*` tag. Sysadmin's corrections are folded in: the update reruns `fieldshow build`, the IPv6 pull retry, the current rollback image `fieldshow:pre-a803da2`, and moving the override aside for pre-`a803da2` images. No Sysadmin notes were readable on the box or nimo, so it follows the brief. maximum was not touched.
+- `deploy-maximum.md` gained first-time setup, a clean `git archive` export, and rollback via a `pre-*` tag. Sysadmin's corrections are folded in: the update reruns `fieldshow build`, the IPv6 pull retry, the current rollback target `fieldshow:pre-a803da2-to-e786df3` (the `a803da2` image) with `show.json.pre-e786df3`, `fieldshow:pre-a803da2` as the older pre-PDF fallback, and moving the override aside (to `~/fieldshow-data`, outside the rsync `--delete` tree) for that fallback. Deploy-doc round 2 made Update idempotent (tag and backup named `pre-<old>-to-<new>`, each skipped if it exists), records the running SHA in `~/fieldshow-data/DEPLOYED_SHA`, and makes the field picture durable by importing it into `intent.json`, since every `fieldshow build` resets `field_image` from the intent. No Sysadmin notes were readable on the box or nimo, so it follows the brief. maximum was not touched.
 - The page still draws no field image (`index.html` has no reference; PROMPT-CARD's "draws it under the dots" predates #3).
 
 ## Evidence
