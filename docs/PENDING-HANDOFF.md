@@ -1,6 +1,6 @@
 # Pending handoff, 2026-10-22
 
-T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; no PR, not merged to main). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
+T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; fast-forwarded to main at `a803da2`). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
 
 #3 (field_image path restriction) is on branch `build/3-field-image`, stacked on T-0005: see [ops/HANDOFF-3-field-image-2026-10-22.md](ops/HANDOFF-3-field-image-2026-10-22.md).
 
@@ -119,7 +119,7 @@ Spot mutants, each in a scratch copy run in the image at `0585cf6` (clean copy `
 
 ### Mutants
 
-`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. The table has 25 rows. Counting every alias name it is 35 mutants, which is what the runner printed; D3 = M7 and Q3 = M11 are the same patch, so there are 23 distinct patches: 21 CAUGHT, 2 EQUIVALENT, 0 survived (re-run by DevBot at `2ca2278`). Aliases that share a patch share the failing tests. M3 is EQUIVALENT (the stored string is not opened). M6 is not observable through the app rather than strictly equivalent: the removed unlink also covered `dest.write_bytes()` failing partway (for example ENOSPC), which can leave a truncated `parts/<s>.pdf` until the next build, but the marker is null so the route still 404s. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
+`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. The table has 25 rows. Counting every alias name it is 35 mutants, which is what the runner printed; D3 = M7 and Q3 = M11 are the same patch, so there are 23 distinct patches: 21 CAUGHT, 1 EQUIVALENT (M3), 1 NOT OBSERVABLE (M6), 0 survived (re-run by DevBot at `2ca2278`). Aliases that share a patch share the failing tests. M3 is EQUIVALENT (the stored string is not opened). M6 is not observable through the app rather than strictly equivalent: the removed unlink also covered `dest.write_bytes()` failing partway (for example ENOSPC), which can leave a truncated `parts/<s>.pdf` until the next build, but the marker is null so the route still 404s. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
 
 | Mutant | Result | Failing tests |
 | --- | --- | --- |

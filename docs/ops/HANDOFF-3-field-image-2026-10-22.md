@@ -1,6 +1,6 @@
 # Handoff: #3 field_image path restriction, 2026-10-22
 
-Branch `build/3-field-image`, off `a803da2` (T-0005 tip). Pushed to origin, no PR, not merged to main.
+Branch `build/3-field-image`, off `a803da2`, which is now `main` (T-0005 fast-forwarded). Pushed to origin, no PR, not merged to main.
 
 ## Problem
 
@@ -49,11 +49,21 @@ All CAUGHT. CLEAN ran green: 62 passed in the image after the non-canonical test
 
 Scripts: `tmp/mutants/run_3.sh` and `run_3b.sh` (gitignored). Logs: `/tmp/fs-3-mutants.log` and `/tmp/fs-3-mutants-b.log` on nimo.
 
+## Reviewer nits folded in (T-0005)
+
+- N2: Python 3.13 and later do not raise on a symlink loop in `Path.resolve()` (non-strict). The path comes back unresolved and `is_file()` is False, so the result is 404 either way. Python 3.12, the image's interpreter, raises RuntimeError, so the RuntimeError catch stays in both the part-PDF and field-image guards.
+- N3: T-0005 mutant M6 is relabelled "not observable", not "equivalent". The summary in `docs/PENDING-HANDOFF.md` now reads 21 CAUGHT, 1 EQUIVALENT (M3), 1 NOT OBSERVABLE (M6).
+
 ## Parked
 
 - An upload whose bytes fail `import_image` (bad extension or ValueError) still returns 500. This is pre-existing and was not in #3's scope.
-- Merge and redeploy belong to the parent. The Tester and Reviewer gates are pending. T-0005's verdict on `a803da2` is still open, and this branch stacks on it.
+- Merge and redeploy belong to the parent. The Tester and Reviewer gates are pending. T-0005 is on main at `a803da2`, which is this branch's base.
 
 ## Evidence
 
-EVIDENCE_PLACEHOLDER
+Run on nimo at code commit `d530bc8`. The commit after it changes docs only.
+
+- `docker build -t fieldshow:t0005 .`: exit 0, `#13 DONE 7.1s`
+- In-image pytest (`fieldshow:t0005`, Python 3.12, host uid, `:ro` mount): `62 passed, 1 warning in 41.82s`
+- Host pytest (Python 3.14): `60 passed, 2 skipped, 1 warning in 26.31s`. The 2 skips are the LilyPond engraving tests; the chmod half of the loop test runs here.
+- Files not owned by the host uid in the worktree: 0
