@@ -101,10 +101,17 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
 
 
 def _paper_html(show: dict) -> str:
-    """Server-rendered so a client that does not run the script still sees the state."""
+    """Server-rendered so a client that does not run the script still sees the state.
+
+    A missing engraver is one line plus a plain "unavailable" on each row, so the
+    sentence is not "unavailable: PDF parts unavailable...". A failed part shows
+    only its short ``part_errors`` reason. The stderr tail stays off the page.
+    """
     pdfs = show.get("part_pdfs") or {}
-    reason = show.get("engrave_error") or "not engraved; run fieldshow build"
-    items = []
+    part_errors = show.get("part_errors") or {}
+    items: list[str] = []
+    if not part_errors and show.get("engrave_error"):
+        items.append(f'<li class="engrave-note">{escape(show["engrave_error"])}</li>')
     for section in SECTION_ORDER:
         label = escape(PART_NAMES[section])
         rel = pdfs.get(section)
@@ -112,25 +119,38 @@ def _paper_html(show: dict) -> str:
             items.append(
                 f'<li>{label} <a href="/api/part-pdf/{escape(section)}">PDF</a></li>'
             )
+            continue
+        short = part_errors.get(section)
+        if short:
+            items.append(
+                f'<li>{label} <span class="unavailable">unavailable: {escape(short)}</span></li>'
+            )
+        elif show.get("engrave_error"):
+            items.append(f'<li>{label} <span class="unavailable">unavailable</span></li>')
         else:
             items.append(
-                f'<li>{label} <span class="unavailable">unavailable: {escape(reason)}</span></li>'
+                f'<li>{label} <span class="unavailable">unavailable: not engraved</span></li>'
             )
     return "\n".join(items)
 
 
 def _part_pdf_file(app: FastAPI, section: str) -> Path | None:
+    """Only ``<show_dir>/parts/<section>.pdf`` for a known section.
+
+    ``part_pdfs`` is a marker, not a path. Null and any other string 404.
+    The opened path is computed, resolved, and kept inside ``parts/``.
+    """
     if section not in SECTION_ORDER:
         return None
-    rel = (app.state.show.get("part_pdfs") or {}).get(section)
     show_dir = app.state.show_dir
-    if not rel or show_dir is None:
+    entry = (app.state.show.get("part_pdfs") or {}).get(section)
+    if entry != f"parts/{section}.pdf" or show_dir is None:
         return None
-    parts = Path(rel).parts
-    if not parts or any(part in ("..", "") for part in parts) or Path(rel).is_absolute():
+    try:
+        parts_dir = (Path(show_dir) / "parts").resolve()
+        path = (parts_dir / f"{section}.pdf").resolve()
+        if not path.is_relative_to(parts_dir) or not path.is_file():
+            return None
+        return path
+    except (ValueError, OSError):
         return None
-    path = (Path(show_dir) / rel).resolve()
-    root = Path(show_dir).resolve()
-    if not path.is_relative_to(root) or not path.is_file():
-        return None
-    return path

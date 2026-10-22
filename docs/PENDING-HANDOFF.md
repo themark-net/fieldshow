@@ -68,3 +68,68 @@ The container still serves the sample intent until a built show is mounted. Pape
 ## Deploy
 
 Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`: rsync the tree, then `docker compose up -d --build`. The engraver is in the image (`Dockerfile` installs `lilypond`). Expect the image to grow by the LilyPond stack described above. Do not rely on a host install of LilyPond. `QT_QPA_PLATFORM` is not required. LilyPond is not a Qt program. PDFs are produced by `fieldshow build`, not by the server: to serve linked parts on maximum, run the build (inside the image is fine) and bind-mount the directory holding `show.json` and its `parts/` (e.g. at `/data`, `FIELDSHOW_SHOW=/data/show.json`). Mounting only the JSON file leaves the parts marked unavailable.
+
+## Round 2
+
+Tester and Reviewer both FAILed `3c9fca0`: the parts engraved, and the tests did not lock the behavior. This round is still local on `build/t0005-part-pdfs`. Nothing was pushed. No PR. No CI workflow was added.
+
+### What changed
+
+- **B1.** The engraved-build test runs `pdftotext` on each `parts/<section>.pdf`. The text must contain that section's `PART_NAMES` value and must not contain another part's name unless one name is a substring of the other. Flute text differs from tuba text, trumpet from snare, and the eleven PDF bodies are not identical. `GET /api/part-pdf/{section}` returns the bytes of `parts/<section>.pdf`. The image installs `poppler-utils` for `pdftotext`.
+- **B2 / RB1.** `tests/test_part_pdfs.py::test_export_parts_start_at_offset_zero` exports the arranged Gate Fanfare with no engraver. Eleven parts, two `<measure>` elements each, first note at offset 0, and no `print-object="no"`. That is the `repro_offset.py` failure on main (`Score.append`). `export_midi` uses the same score, so MIDI parts start together too (`docs/ARCHITECTURE.md`).
+- **B3.** The fake `lilypond` writes a `%PDF` at the `-o` prefix plus `.pdf`, then exits 4. The build still exits 0, stderr contains `lilypond exited 4`, `part_pdfs` is null, and `parts/` has no PDF.
+- **S1.** Each failed part stores a short `part_errors[section]` (`lilypond exited 4`, `timed out`). The page row is only that reason. The stderr tail stays on stderr and in `engrave_error`, and it is not in the HTML (`/tmp/` and `fieldshow-engrave-` are absent; each paper `<li>` is under 200 characters). A missing engraver is one banner line plus `unavailable` on each row, not `unavailable: PDF parts unavailable`.
+- **S2.** `engrave_parts` deletes every existing `parts/<section>.pdf` before engraving, including the missing-engraver return. A pre-seeded `%PDF` is gone after a missing-engraver build and after a failing engraver, and `create_app` on that JSON returns 404. The old per-part `dest.unlink()` in the except branch was dead (the PDF is copied only after success) and is removed. The live mutant is "stale clear removed".
+- **S3 / RB2.** The route serves only `<show_dir>/parts/<section>.pdf` for a section in `SECTION_ORDER`, and only when `part_pdfs[section]` is exactly that relative marker. The path is computed, resolved, and must be `is_relative_to` the resolved `parts/` directory and a real file. `ValueError` and `OSError` are 404. Covered, all 404 and never the foreign bytes: `../show.json`, `%2e%2e%2fshow.json`, a symlink out of `parts/`, JSON values `show.json`, `../x`, `/etc/passwd`, `notes.txt`, and a NUL, including when a real part PDF is also on disk. A planted `parts/not-a-part.pdf` is 404. A good marker still returns that file.
+- **Q9.** `POST /api/intent` with `tempo` clears the links and the route is 404. A design-only intent keeps the links.
+- **Timeout.** Both engraver subprocesses use `start_new_session=True` and `Popen.communicate(timeout=...)`. On `TimeoutExpired`, `os.killpg(pid, SIGKILL)` kills the grandchild. `FIELDSHOW_ENGRAVE_TIMEOUT` is seconds, default 120. The fake `lilypond` backgrounds `sleep 300`, records the pid, and sleeps. With the timeout at 2s the build exits 0, the short reason is `timed out`, and each child pid is gone (`ProcessLookupError` or a reaped zombie).
+- **Evidence.** `docs/adr/0004-evidence/` holds the eval Dockerfile, `render.sh`, the out2 commands, the small input MusicXML, pdfinfo and pdftotext logs, and `contact-sheet.png` (MuseScore vs LilyPond, trumpet and simultaneous full score, MuseScore page 2). About 384 KB. ADR 0004 links it and records that the MuseScore lean was the CEO's daily product touch (the ticket brief), and that these pages overrode it.
+- **Deploy.** `docs/ops/deploy-maximum.md` mounts the show directory (`-v /path/showdir:/data`, `FIELDSHOW_SHOW=/data/show.json`) and shows how to run `fieldshow build` in the image.
+- **AGENTS.md** names `musicxml2ly` and `FIELDSHOW_MUSICXML2LY`.
+
+### Verification
+
+Host `.venv` (engraving tests skip): `22 passed, 2 skipped, 1 warning in 24.38s`.
+
+Docker build: `naming to docker.io/library/fieldshow:t0005 done`, exit 0. Image `fieldshow:t0005` is 269 MB (`a1561f5ce90e`).
+
+In-image pytest, worktree mounted, `--user "$(id -u):$(id -g)"`, `PYTHONPATH=/work/src`: `24 passed, 1 warning in 39.43s`. The warning is the existing Starlette note about httpx. Import path was `/work/src/fieldshow/music/engrave.py`.
+
+### Mutants
+
+`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. 35 rows, 0 survived. Aliases that share a patch share the failing tests. M3 and M6 are EQUIVALENT: the stored string is not opened, and the dead `dest.unlink()` is gone. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
+
+| Mutant | Result | Failing tests |
+| --- | --- | --- |
+| D1 engrave loop `SECTION_ORDER[:1]` | CAUGHT | `test_build_writes_one_real_pdf_per_part`, `test_page_links_each_part_pdf`, `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_failed_engrave_page_shows_only_the_short_reason`, `test_engrave_timeout_kills_grandchild`, `test_engraver_path_with_a_space_still_writes_pdfs` |
+| D2 PDF written as empty bytes | CAUGHT | `test_build_writes_one_real_pdf_per_part`, `test_page_links_each_part_pdf`, `test_engraver_path_with_a_space_still_writes_pdfs` |
+| D3 missing-engraver guard removed (`if False`) | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+| D4 missing engraver raises | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+| Q1 set-but-missing engraver falls through to `PATH` | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+| Q2 route serves flute for every section | CAUGHT | `test_page_links_each_part_pdf`, `test_part_pdf_route_rejects_null_tamper_and_escape` |
+| Q3 content-type `application/octet-stream` | CAUGHT | `test_page_links_each_part_pdf`, `test_part_pdf_route_rejects_null_tamper_and_escape` |
+| Q4 / M5 / R-M5 `Score.append` | CAUGHT | `test_export_parts_start_at_offset_zero` |
+| Q5 / M8 ignore lilypond return code | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_failed_engrave_page_shows_only_the_short_reason` |
+| Q6 / R-stale stale-PDF clearing removed | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+| Q7 every part engraves flute's notes | CAUGHT | `test_build_writes_one_real_pdf_per_part` |
+| Q8 / M4 ignore JSON null and serve a file on disk | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape`, `test_music_intent_hides_pdfs_and_design_intent_keeps_them` |
+| Q9 / M10 / R-M10 intent does not clear `part_pdfs` | CAUGHT | `test_music_intent_hides_pdfs_and_design_intent_keeps_them` |
+| Q10 page links every part when unavailable | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable`, `test_failed_engrave_page_shows_only_the_short_reason`, `test_engrave_timeout_kills_grandchild`, `test_music_intent_hides_pdfs_and_design_intent_keeps_them` |
+| Q11 per-part failure does not set `engrave_error` | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_engrave_timeout_kills_grandchild` |
+| Q12 failure still records `part_pdfs` | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_failed_engrave_page_shows_only_the_short_reason`, `test_engrave_timeout_kills_grandchild` |
+| Q13 part name dropped | CAUGHT | `test_build_writes_one_real_pdf_per_part`, `test_musicxml_and_midi_round_trip` |
+| M1 / R-M1 drop timeout and `killpg` | CAUGHT | `test_engrave_timeout_kills_grandchild` |
+| M2 / R-M2 `" ".join(argv)` and `shell=True` | CAUGHT | `test_engraver_path_with_a_space_still_writes_pdfs` |
+| M3 remove only the old `..` / absolute scan | EQUIVALENT | Stored `part_pdfs` strings are not opened. The file name is `parts/<section>.pdf`. Containment is `resolve` plus `is_relative_to(parts/)`, caught by M3b. |
+| M3b / R-M3b remove `is_relative_to(parts/)` | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape` |
+| M6 skip `dest.unlink()` | EQUIVALENT | That unlink is gone. Stale files are cleared up front; removing that call is Q6 / R-stale. |
+| M7 missing-engraver guard `if False` | CAUGHT | same as D3: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
+| M9 drop `section not in SECTION_ORDER` | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape` |
+| M11 `application/octet-stream` | CAUGHT | same as Q3 |
+
+### Parked
+
+- `HEAD` on `/api/part-pdf/{section}` stays 405. Not changed.
+- Arranger range and transposition, filed separately by PM: transposed parts carry the concert key signature, tenor sax is in bass clef at the wrong octave, alto sax A3 is below range, mellophone reaches F6, battery is on a pitched staff.
+- No CI workflow. PM follow-up. Nothing under `.github/` was added.
+- `field_image` can still be an arbitrary file read through `apply_intent` and `GET /api/field-image`. Pre-existing. PM files it separately. Not touched here.

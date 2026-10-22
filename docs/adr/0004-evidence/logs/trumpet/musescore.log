@@ -1,0 +1,5 @@
+W: QStandardPaths: wrong permissions on runtime directory /tmp/runtime, 0777 instead of 0700
+convert </work/in/trumpet-clean.musicxml>...
+	to </work/out2/trumpet/musescore.pdf>
+... success!
+ms_exit=0

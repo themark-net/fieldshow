@@ -16,7 +16,7 @@ fieldshow build examples/fanfare.json -o /tmp/show.json
 fieldshow serve --show /tmp/show.json --port 8876
 ```
 
-`build` also writes `parts/<section>.pdf` beside the JSON when LilyPond is on `PATH` (or `FIELDSHOW_ENGRAVER`). A missing engraver is a stderr warning and null `part_pdfs`, not a failed build. The page serves them at `/api/part-pdf/{section}`.
+`build` also writes `parts/<section>.pdf` beside the JSON when LilyPond and `musicxml2ly` are on `PATH`, or when `FIELDSHOW_ENGRAVER` / `FIELDSHOW_LILYPOND` and `FIELDSHOW_MUSICXML2LY` point at those binaries. A missing engraver is a stderr warning and null `part_pdfs`, not a failed build. The page serves them at `/api/part-pdf/{section}`.
 
 ## Ownership
 

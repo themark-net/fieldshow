@@ -1,0 +1,47 @@
+                                 Music21 Fragment
+
+                              
+                                                                             Music21
+
+              4 = 132
+                      
+    Flute 
+                 4
+                               
+              4    
+  Clarinet 
+                 4
+               
+  Alto Sax   4
+                 4        
+                               
+ Tenor Sax
+               
+              4 4     
+                           
+              4         
+  Trumpet 
+                 4
+                             
+              4 
+Mellophone 
+                 4
+            4        
+ Trombone     4
+             4        
+  Baritone
+                 4
+            4 
+    Tuba      4       
+                              
+    Snare   4
+                 4  
+               
+Bass Drum   4
+                 4           
+
+
+
+
+                       Music engraving by LilyPond 2.24.4 - www.lilypond.org
+

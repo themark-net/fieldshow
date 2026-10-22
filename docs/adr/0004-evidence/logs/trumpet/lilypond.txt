@@ -1,0 +1,13 @@
+                              Music21 Fragment
+                                                                          Music21
+                         
+              
+            = 132
+Trumpet   4
+             4
+
+
+
+
+                    Music engraving by LilyPond 2.24.4 - www.lilypond.org
+

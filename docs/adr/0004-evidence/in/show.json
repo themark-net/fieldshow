@@ -1,0 +1,445 @@
+{
+  "version": 1,
+  "title": "Gate Fanfare",
+  "author": "fieldshow",
+  "school": "",
+  "year": "2026",
+  "key": "Bb",
+  "meter": [
+    4,
+    4
+  ],
+  "tempo": 132,
+  "melody": [
+    "Bb4",
+    "D5",
+    "F5",
+    "Bb5",
+    "A5",
+    "G5",
+    "F5",
+    "Eb5"
+  ],
+  "chords": [
+    "Bb",
+    "F7"
+  ],
+  "ensemble": "hs-wind-battery",
+  "counts_per_set": 8,
+  "sets": [
+    {
+      "name": "Hash line",
+      "shapes": [
+        {
+          "section": "trumpet",
+          "kind": "line",
+          "from": [
+            -16,
+            32
+          ],
+          "to": [
+            16,
+            32
+          ],
+          "count": 5
+        },
+        {
+          "section": "tuba",
+          "kind": "block",
+          "origin": [
+            -6,
+            12
+          ],
+          "rows": 2,
+          "cols": 2,
+          "spacing": 2
+        },
+        {
+          "section": "snare",
+          "kind": "line",
+          "from": [
+            -4,
+            20
+          ],
+          "to": [
+            4,
+            20
+          ],
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "Spread",
+      "shapes": [
+        {
+          "section": "trumpet",
+          "kind": "arc",
+          "center": [
+            0,
+            28
+          ],
+          "radius": 14,
+          "start_deg": 200,
+          "end_deg": 340,
+          "count": 5
+        },
+        {
+          "section": "tuba",
+          "kind": "line",
+          "from": [
+            -18,
+            8
+          ],
+          "to": [
+            18,
+            8
+          ],
+          "count": 4
+        },
+        {
+          "section": "snare",
+          "kind": "line",
+          "from": [
+            -6,
+            18
+          ],
+          "to": [
+            6,
+            18
+          ],
+          "count": 3
+        }
+      ]
+    }
+  ],
+  "design": {
+    "uniform": "Black jacket, gold sash",
+    "flag": "Gold field with a black diagonal",
+    "palette": [
+      "#e8a838",
+      "#14120e",
+      "#f4efe4",
+      "#8c3a3a"
+    ]
+  },
+  "field_image": null,
+  "performers": [
+    {
+      "id": "trumpet-1",
+      "label": "T1",
+      "section": "trumpet",
+      "positions": [
+        {
+          "x": -16.0,
+          "y": 32.0,
+          "rotation": 0
+        },
+        {
+          "x": -13.155696691002717,
+          "y": 23.211717993440637,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "trumpet-2",
+      "label": "T2",
+      "section": "trumpet",
+      "positions": [
+        {
+          "x": -8.0,
+          "y": 32.0,
+          "rotation": 0
+        },
+        {
+          "x": -8.03007010891465,
+          "y": 16.53187137995412,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "trumpet-3",
+      "label": "T3",
+      "section": "trumpet",
+      "positions": [
+        {
+          "x": 0.0,
+          "y": 32.0,
+          "rotation": 0
+        },
+        {
+          "x": -2.5717582782094417e-15,
+          "y": 14.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "trumpet-4",
+      "label": "T4",
+      "section": "trumpet",
+      "positions": [
+        {
+          "x": 8.0,
+          "y": 32.0,
+          "rotation": 0
+        },
+        {
+          "x": 8.030070108914645,
+          "y": 16.531871379954115,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "trumpet-5",
+      "label": "T5",
+      "section": "trumpet",
+      "positions": [
+        {
+          "x": 16.0,
+          "y": 32.0,
+          "rotation": 0
+        },
+        {
+          "x": 13.155696691002717,
+          "y": 23.21171799344064,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "tuba-1",
+      "label": "U1",
+      "section": "tuba",
+      "positions": [
+        {
+          "x": -6,
+          "y": 12,
+          "rotation": 0
+        },
+        {
+          "x": -18.0,
+          "y": 8.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "tuba-2",
+      "label": "U2",
+      "section": "tuba",
+      "positions": [
+        {
+          "x": -4,
+          "y": 12,
+          "rotation": 0
+        },
+        {
+          "x": -6.0,
+          "y": 8.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "tuba-3",
+      "label": "U3",
+      "section": "tuba",
+      "positions": [
+        {
+          "x": -6,
+          "y": 14,
+          "rotation": 0
+        },
+        {
+          "x": 6.0,
+          "y": 8.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "tuba-4",
+      "label": "U4",
+      "section": "tuba",
+      "positions": [
+        {
+          "x": -4,
+          "y": 14,
+          "rotation": 0
+        },
+        {
+          "x": 18.0,
+          "y": 8.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "snare-1",
+      "label": "S1",
+      "section": "snare",
+      "positions": [
+        {
+          "x": -4.0,
+          "y": 20.0,
+          "rotation": 0
+        },
+        {
+          "x": -6.0,
+          "y": 18.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "snare-2",
+      "label": "S2",
+      "section": "snare",
+      "positions": [
+        {
+          "x": 0.0,
+          "y": 20.0,
+          "rotation": 0
+        },
+        {
+          "x": 0.0,
+          "y": 18.0,
+          "rotation": 0
+        }
+      ]
+    },
+    {
+      "id": "snare-3",
+      "label": "S3",
+      "section": "snare",
+      "positions": [
+        {
+          "x": 4.0,
+          "y": 20.0,
+          "rotation": 0
+        },
+        {
+          "x": 6.0,
+          "y": 18.0,
+          "rotation": 0
+        }
+      ]
+    }
+  ],
+  "parts": {
+    "flute": [
+      "Bb4",
+      "D5",
+      "F5",
+      "Bb5",
+      "A5",
+      "G5",
+      "F5",
+      "Eb5"
+    ],
+    "clarinet": [
+      "C5",
+      "E5",
+      "G5",
+      "C6",
+      "B5",
+      "A5",
+      "G5",
+      "F5"
+    ],
+    "alto_sax": [
+      "D4",
+      "D4",
+      "D4",
+      "D4",
+      "A3",
+      "A3",
+      "A3",
+      "A3"
+    ],
+    "tenor_sax": [
+      "E3",
+      "E3",
+      "E3",
+      "E3",
+      "B3",
+      "B3",
+      "B3",
+      "B3"
+    ],
+    "trumpet": [
+      "C5",
+      "E5",
+      "G5",
+      "C6",
+      "B5",
+      "A5",
+      "G5",
+      "F5"
+    ],
+    "mellophone": [
+      "F5",
+      "A5",
+      "C6",
+      "F6",
+      "E6",
+      "D6",
+      "C6",
+      "Bb5"
+    ],
+    "trombone": [
+      "D3",
+      "D3",
+      "D3",
+      "D3",
+      "A3",
+      "A3",
+      "A3",
+      "A3"
+    ],
+    "baritone": [
+      "F3",
+      "F3",
+      "F3",
+      "F3",
+      "C3",
+      "C3",
+      "C3",
+      "C3"
+    ],
+    "tuba": [
+      "Bb2",
+      "Bb2",
+      "Bb2",
+      "Bb2",
+      "F2",
+      "F2",
+      "F2",
+      "F2"
+    ],
+    "snare": [
+      "C5",
+      "G4",
+      "C5",
+      "G4",
+      "C5",
+      "G4",
+      "C5",
+      "G4"
+    ],
+    "bass_drum": [
+      "C4",
+      null,
+      null,
+      null,
+      "C4",
+      null,
+      null,
+      null
+    ]
+  }
+}
