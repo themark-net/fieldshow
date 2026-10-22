@@ -48,6 +48,8 @@ def engrave_parts(show: dict, output: str | Path) -> dict:
     The show JSON is still the caller's to save. Existing part PDFs are removed
     first so a failed or skipped engrave cannot leave a stale file on disk.
     """
+    # A bad timeout is operator config. Fail before any old PDF is removed.
+    timeout = _timeout_s()
     show["part_pdfs"] = {section: None for section in SECTION_ORDER}
     show["part_errors"] = {}
     base = Path(output).parent
@@ -65,7 +67,7 @@ def engrave_parts(show: dict, output: str | Path) -> dict:
     for section in SECTION_ORDER:
         dest = base / "parts" / f"{section}.pdf"
         try:
-            _engrave_one(show, section, dest, lilypond, converter)
+            _engrave_one(show, section, dest, lilypond, converter, timeout)
         except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
             short = _short_reason(exc)
             show["part_errors"][section] = short
@@ -87,20 +89,22 @@ def _clear_part_pdfs(base: Path) -> None:
             stale.unlink()
 
 
-def _engrave_one(show: dict, section: str, dest: Path, lilypond: str, converter: str) -> None:
+def _engrave_one(
+    show: dict, section: str, dest: Path, lilypond: str, converter: str, timeout: float
+) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="fieldshow-engrave-") as tmp:
         work = Path(tmp)
         xml_path = work / f"{section}.musicxml"
         ly_path = work / f"{section}.ly"
         export_musicxml(show, xml_path, section=section)
-        converted = _run([converter, "-o", str(ly_path), str(xml_path)])
+        converted = _run([converter, "-o", str(ly_path), str(xml_path)], timeout)
         if converted.returncode != 0 or not ly_path.is_file():
             raise RuntimeError(
                 f"musicxml2ly exited {converted.returncode}: {_tail(converted.stderr or converted.stdout)}"
             )
         prefix = work / section
-        rendered = _run([lilypond, "--pdf", "-o", str(prefix), str(ly_path)])
+        rendered = _run([lilypond, "--pdf", "-o", str(prefix), str(ly_path)], timeout)
         pdf = prefix.with_suffix(".pdf")
         if rendered.returncode != 0 or not pdf.is_file():
             raise RuntimeError(
@@ -109,13 +113,12 @@ def _engrave_one(show: dict, section: str, dest: Path, lilypond: str, converter:
         dest.write_bytes(pdf.read_bytes())
 
 
-def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+def _run(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
     """Run ``argv`` as a new session so a timeout can kill grandchildren too.
 
     Real LilyPond spawns Ghostscript. ``subprocess.run(..., timeout=)`` would
-    leave that child behind. ``FIELDSHOW_ENGRAVE_TIMEOUT`` is seconds (default 120).
+    leave that child behind. ``timeout`` is seconds (``FIELDSHOW_ENGRAVE_TIMEOUT``).
     """
-    timeout = _timeout_s()
     proc = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
@@ -139,7 +142,15 @@ def _timeout_s() -> float:
     raw = os.environ.get("FIELDSHOW_ENGRAVE_TIMEOUT", "").strip()
     if not raw:
         return float(_DEFAULT_TIMEOUT_S)
-    return float(raw)
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not (0 < value < float("inf")):
+        raise ValueError(
+            f"FIELDSHOW_ENGRAVE_TIMEOUT must be a positive number of seconds, got {raw!r}"
+        )
+    return value
 
 
 def _existing_file(value: str) -> str | None:

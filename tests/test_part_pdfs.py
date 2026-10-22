@@ -511,3 +511,124 @@ def test_engraver_path_with_a_space_still_writes_pdfs(tmp_path: Path):
         assert show["part_pdfs"][section] == f"parts/{section}.pdf"
         data = (tmp_path / "parts" / f"{section}.pdf").read_bytes()
         assert data.startswith(b"%PDF")
+
+
+def _route_client(show_dir: Path, markers: dict[str, str | None]) -> TestClient:
+    show = load_show(ROOT / "examples" / "fanfare.json")
+    show["part_pdfs"] = {section: None for section in SECTION_ORDER}
+    show["part_pdfs"].update(markers)
+    show["engrave_error"] = None
+    path = show_dir / "show.json"
+    path.write_text(json.dumps(show))
+    return TestClient(create_app(load_show(path), show_path=path), raise_server_exceptions=False)
+
+
+def test_part_pdf_route_404s_when_the_file_is_missing_or_looping(tmp_path: Path):
+    """Marker set but no file (the 'mounted only the JSON' deploy), and a symlink loop."""
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    good = b"%PDF-1.4\n%baritone-good\n"
+    (parts / "baritone.pdf").write_bytes(good)
+    (parts / "tuba.pdf").symlink_to("tuba.pdf")
+    client = _route_client(
+        tmp_path,
+        {
+            "baritone": "parts/baritone.pdf",
+            "trumpet": "parts/trumpet.pdf",
+            "tuba": "parts/tuba.pdf",
+        },
+    )
+    assert client.get("/api/part-pdf/baritone").content == good
+    assert client.get("/api/part-pdf/trumpet").status_code == 404
+    assert client.get("/api/part-pdf/tuba").status_code == 404
+
+
+def test_part_pdf_route_404s_when_parts_dir_is_unreadable(tmp_path: Path):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    (parts / "trumpet.pdf").write_bytes(b"%PDF-1.4\n%trumpet\n")
+    client = _route_client(tmp_path, {"trumpet": "parts/trumpet.pdf"})
+    parts.chmod(0)
+    try:
+        response = client.get("/api/part-pdf/trumpet")
+    finally:
+        parts.chmod(0o755)
+    assert response.status_code == 404
+
+
+def test_part_pdf_route_404s_when_parts_dir_points_outside_the_show(tmp_path: Path):
+    show_dir = tmp_path / "show"
+    show_dir.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "trumpet.pdf").write_bytes(b"%PDF-1.4 ELSEWHERE-OUTSIDE-SHOWDIR\n")
+    (show_dir / "parts").symlink_to(elsewhere, target_is_directory=True)
+    client = _route_client(show_dir, {"trumpet": "parts/trumpet.pdf"})
+    response = client.get("/api/part-pdf/trumpet")
+    assert response.status_code == 404
+    assert b"ELSEWHERE" not in response.content
+
+
+def test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs(tmp_path: Path):
+    parts = tmp_path / "parts"
+    parts.mkdir()
+    old = {section: f"%PDF-1.4\n%old-{section}\n".encode() for section in SECTION_ORDER}
+    for section, data in old.items():
+        (parts / f"{section}.pdf").write_bytes(data)
+    out = tmp_path / "show.json"
+    out.write_text('{"previous": true}')
+    env = _fake_tools(tmp_path / "bin", _exit_4_lilypond())
+    env["FIELDSHOW_ENGRAVE_TIMEOUT"] = "abc"
+    result = _build(out, env)
+    assert result.returncode == 2
+    assert "FIELDSHOW_ENGRAVE_TIMEOUT must be a positive number of seconds, got 'abc'" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert out.read_text() == '{"previous": true}'
+    for section, data in old.items():
+        assert (parts / f"{section}.pdf").read_bytes() == data
+
+
+def test_each_part_export_carries_its_own_pitches(tmp_path: Path):
+    """The one-staff MusicXML the engraver reads has that section's notes."""
+    from music21 import converter, note
+
+    show = arrange(load_show(ROOT / "examples" / "fanfare.json"))
+
+    def midi(tokens):
+        return [note.Note(token).pitch.midi for token in tokens if token is not None]
+
+    assert midi(show["parts"]["flute"]) != midi(show["parts"]["tuba"])
+    for section in SECTION_ORDER:
+        dest = tmp_path / f"{section}.musicxml"
+        export_musicxml(show, dest, section=section)
+        parts = list(converter.parse(str(dest)).parts)
+        assert len(parts) == 1
+        assert parts[0].partName == PART_NAMES[section]
+        got = [n.pitch.midi for n in parts[0].flatten().notes]
+        assert got == midi(show["parts"][section]), section
+
+
+def test_musicxml2ly_exit_status_fails_the_part(tmp_path: Path):
+    env = _fake_tools(
+        tmp_path / "bin",
+        "#!/bin/sh\n"
+        "out=\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  if [ "$1" = "-o" ]; then out=$2; shift 2; continue; fi\n'
+        "  shift\n"
+        "done\n"
+        "printf '%s\\n' '%PDF-1.4 fake-good' > \"${out}.pdf\"\n"
+        "exit 0\n",
+    )
+    converter = Path(env["FIELDSHOW_MUSICXML2LY"])
+    _write_exec(converter, _converter_script().replace("exit 0\n", "exit 3\n"))
+    out = tmp_path / "show.json"
+    result = _build(out, env)
+    assert result.returncode == 0, result.stderr
+    assert "musicxml2ly exited 3" in result.stderr
+    show = json.loads(out.read_text())
+    assert show["part_pdfs"] == {section: None for section in SECTION_ORDER}
+    assert show["part_errors"]["trumpet"] == "musicxml2ly exited 3"
+    assert list((tmp_path / "parts").glob("*.pdf")) == []

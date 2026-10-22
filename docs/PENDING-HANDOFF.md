@@ -29,7 +29,7 @@ docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp --user "$(id -u):$(id -g)"
   sh -c 'python -m venv /tmp/v --system-site-packages && . /tmp/v/bin/activate && pip install -q --no-cache-dir -e ".[dev]" && pytest'
 ```
 
-`fieldshow:t0005` is about 278MB on disk, 192MB content (`docker images`). `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
+`fieldshow:t0005` is 227MB on disk, 200MB content (`docker images` on nimo, image `3237f51ba193`, Round 3). Earlier notes said 278MB; that was a different measurement and is wrong for this image. `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
 
 ## Decision
 
@@ -117,7 +117,7 @@ Spot mutants, each in a scratch copy run in the image at `0585cf6` (clean copy `
 
 ### Mutants
 
-`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. 35 rows, 0 survived (re-run by DevBot at `2ca2278`, same `src/` and `tests/` as the tip: 33 CAUGHT, 2 EQUIVALENT). Aliases that share a patch share the failing tests. M3 and M6 are EQUIVALENT: the stored string is not opened, and the dead `dest.unlink()` is gone. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
+`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. The table has 25 rows. Counting every alias name it is 35 mutants, which is what the runner printed; D3 = M7 and Q3 = M11 are the same patch, so there are 23 distinct patches: 21 CAUGHT, 2 EQUIVALENT, 0 survived (re-run by DevBot at `2ca2278`). Aliases that share a patch share the failing tests. M3 is EQUIVALENT (the stored string is not opened). M6 is not observable through the app rather than strictly equivalent: the removed unlink also covered `dest.write_bytes()` failing partway (for example ENOSPC), which can leave a truncated `parts/<s>.pdf` until the next build, but the marker is null so the route still 404s. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
 
 | Mutant | Result | Failing tests |
 | --- | --- | --- |
@@ -142,7 +142,7 @@ Spot mutants, each in a scratch copy run in the image at `0585cf6` (clean copy `
 | M2 / R-M2 `" ".join(argv)` and `shell=True` | CAUGHT | `test_engraver_path_with_a_space_still_writes_pdfs` |
 | M3 remove only the old `..` / absolute scan | EQUIVALENT | Stored `part_pdfs` strings are not opened. The file name is `parts/<section>.pdf`. Containment is `resolve` plus `is_relative_to(parts/)`, caught by M3b. |
 | M3b / R-M3b remove `is_relative_to(parts/)` | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape` |
-| M6 skip `dest.unlink()` | EQUIVALENT | That unlink is gone. Stale files are cleared up front; removing that call is Q6 / R-stale. |
+| M6 skip `dest.unlink()` | NOT OBSERVABLE | That unlink is gone. Stale files are cleared up front; removing that call is Q6 / R-stale. |
 | M7 missing-engraver guard `if False` | CAUGHT | same as D3: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
 | M9 drop `section not in SECTION_ORDER` | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape` |
 | M11 `application/octet-stream` | CAUGHT | same as Q3 |

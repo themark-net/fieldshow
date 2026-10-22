@@ -138,7 +138,8 @@ def _part_pdf_file(app: FastAPI, section: str) -> Path | None:
     """Only ``<show_dir>/parts/<section>.pdf`` for a known section.
 
     ``part_pdfs`` is a marker, not a path. Null and any other string 404.
-    The opened path is computed, resolved, and kept inside ``parts/``.
+    The opened path is computed, resolved, and kept inside ``parts/``, and
+    ``parts/`` itself must resolve inside the show directory.
     """
     if section not in SECTION_ORDER:
         return None
@@ -147,10 +148,14 @@ def _part_pdf_file(app: FastAPI, section: str) -> Path | None:
     if entry != f"parts/{section}.pdf" or show_dir is None:
         return None
     try:
+        show_root = Path(show_dir).resolve()
         parts_dir = (Path(show_dir) / "parts").resolve()
+        if not parts_dir.is_relative_to(show_root):
+            return None
         path = (parts_dir / f"{section}.pdf").resolve()
         if not path.is_relative_to(parts_dir) or not path.is_file():
             return None
         return path
-    except (ValueError, OSError):
+    except (ValueError, OSError, RuntimeError):
+        # RuntimeError: Python 3.12 Path.resolve() on a symlink loop.
         return None
