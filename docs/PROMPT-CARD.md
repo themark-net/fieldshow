@@ -54,7 +54,7 @@ fieldshow export-om show.json -o show.om
 fieldshow serve --show show.json --host 0.0.0.0 --port 8876
 ```
 
-`show.om` opens in OpenMarch. `score.musicxml` opens in MuseScore or any MusicXML editor. The serve page is the integrated view: dots, parts, and the uniform and flag notes together.
+`show.om` opens in OpenMarch. `score.musicxml` opens in MuseScore or any MusicXML editor. `fieldshow build` also writes one LilyPond PDF per part (`parts/trumpet.pdf` and the rest) next to the show file when LilyPond is installed. The serve page is the integrated view: dots, parts, those PDFs, and the uniform and flag notes together.
 
 ## Pictures
 

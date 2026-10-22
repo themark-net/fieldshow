@@ -13,6 +13,7 @@ from fieldshow.drill.image import import_image
 from fieldshow.drill.openmarch import write_om
 from fieldshow.model import apply_intent, demo_show, load_show, save_show, validate_intent
 from fieldshow.music.arrange import arrange
+from fieldshow.music.engrave import engrave_parts
 from fieldshow.music.io import export_midi, export_musicxml, import_musicxml
 
 
@@ -67,6 +68,8 @@ def cmd_chart(args: argparse.Namespace) -> int:
 
 def cmd_build(args: argparse.Namespace) -> int:
     show = _build(load_show(args.show))
+    # Paper parts are best-effort. A missing engraver still leaves the show.
+    show = engrave_parts(show, args.output)
     save_show(show, args.output)
     print(args.output)
     return 0
@@ -121,7 +124,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from fieldshow.web.app import create_app
 
     show = load_show(args.show) if args.show else demo_show()
-    app = create_app(show)
+    app = create_app(show, show_path=args.show)
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
@@ -149,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, func, help_text in (
         ("arrange", cmd_arrange, "write transposed section parts"),
         ("chart", cmd_chart, "place marchers from shapes"),
-        ("build", cmd_build, "arrange and chart"),
+        ("build", cmd_build, "arrange, chart, and write a PDF per part"),
     ):
         cmd = sub.add_parser(name, help=help_text)
         cmd.add_argument("show")

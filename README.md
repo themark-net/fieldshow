@@ -17,6 +17,8 @@ fieldshow export-musicxml /tmp/gate.json -o /tmp/gate.musicxml
 fieldshow serve --show /tmp/gate.json --port 8876
 ```
 
+`fieldshow build` writes the show JSON and, when LilyPond is installed, one PDF per part next to it (`parts/trumpet.pdf` and the other sections). The page links those files. Without LilyPond the build still exits 0, prints `PDF parts unavailable: LilyPond not found (set FIELDSHOW_ENGRAVER)` on stderr, and the page marks the parts unavailable. The Docker image installs LilyPond. See `docs/adr/0004-lilypond-part-pdfs.md`.
+
 The sample tune, Gate Fanfare, is original.
 
 OpenMarch's desktop app is separate and AGPL. This repo is MIT and only vendors their Apache-2.0 show schema. See `docs/adr/0002-oss-glue.md`.

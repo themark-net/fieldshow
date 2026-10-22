@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from music21 import converter, key, meter, note, pitch, stream, tempo
+from music21 import converter, key, metadata, meter, note, pitch, stream, tempo
 
 from fieldshow.model import SECTION_ORDER, demo_show
 from fieldshow.music.arrange import spell
 
-_PART_NAMES = {
+PART_NAMES = {
     "flute": "Flute",
     "clarinet": "Clarinet",
     "alto_sax": "Alto Sax",
@@ -24,10 +24,10 @@ _PART_NAMES = {
 }
 
 
-def export_musicxml(show: dict, path: str | Path) -> None:
+def export_musicxml(show: dict, path: str | Path, section: str | None = None) -> None:
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _score(show).write("musicxml", fp=str(dest))
+    _score(show, section).write("musicxml", fp=str(dest))
 
 
 def export_midi(show: dict, path: str | Path) -> None:
@@ -66,26 +66,38 @@ def import_musicxml(path: str | Path) -> dict:
     return show
 
 
-def _score(show: dict) -> stream.Score:
+def _score(show: dict, section: str | None = None) -> stream.Score:
+    """One score. Parts sit at offset 0 so they sound together.
+
+    ``Score.append`` would place each part after the previous one and the
+    MusicXML writer would pad the gap with empty measures.
+    """
     score = stream.Score()
+    info = metadata.Metadata()
+    # movementName alone. Setting title also writes work-title, and LilyPond
+    # prints both, so the name would appear twice.
+    info.movementName = show.get("title") or ""
+    info.composer = show.get("author") or ""
+    score.metadata = info
     key_name = show.get("key") or "C"
     beats, beat_value = show.get("meter") or [4, 4]
     tempo_number = show.get("tempo")
     parts = show.get("parts") or {}
-    for section in SECTION_ORDER:
+    sections = (section,) if section else SECTION_ORDER
+    for name in sections:
         part = stream.Part()
-        part.partName = _PART_NAMES[section]
+        part.partName = PART_NAMES[name]
         # Fresh objects per part. music21 will not insert the same element twice.
         part.insert(0, _signature(key_name))
         part.insert(0, meter.TimeSignature(f"{beats}/{beat_value}"))
         if tempo_number:
             part.insert(0, tempo.MetronomeMark(number=tempo_number))
-        for token in parts.get(section) or []:
+        for token in parts.get(name) or []:
             if token is None:
                 part.append(note.Rest(quarterLength=1.0))
             else:
                 part.append(note.Note(token, quarterLength=1.0))
-        score.append(part)
+        score.insert(0, part)
     return score
 
 

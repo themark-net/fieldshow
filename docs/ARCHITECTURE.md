@@ -15,8 +15,9 @@ intent JSON + optional image + optional MusicXML
         |-- arrange() --> parts, MusicXML, MIDI, playback JSON
         |-- chart()   --> marcher positions
         |-- export_om() --> OpenMarch .om
+        |-- fieldshow build --> parts/<section>.pdf via LilyPond (ADR 0004)
         v
-   serve  -> one page: field, scrubber, parts, uniform and flag
+   serve  -> one page: field, scrubber, parts, paper links, uniform and flag
 ```
 
 ## Show document
@@ -60,7 +61,9 @@ The pattern restarts every 4 beats. A 3/4 tune still uses the first three cells 
 
 `playback(show)` returns one object per section, in `SECTION_ORDER`. Each note is `{beat, midi, beats}` with `beats` 1. Omit rests. `beat` is the index in the part list.
 
-`export_musicxml` writes one score. Part order is `SECTION_ORDER`. `partName` values are Flute, Clarinet, Alto Sax, Tenor Sax, Trumpet, Mellophone, Trombone, Baritone, Tuba, Snare, Bass Drum. Key signature comes from `show["key"]` via `music21.key.Key` (`Bb` is two flats, `sharps == -2`). Time signature from `meter`. Quarter notes, and rests where the token is `None`. `export_midi` writes a playable MIDI file of those same parts.
+`export_musicxml` writes one score. Part order is `SECTION_ORDER`. Parts are inserted at offset 0 so they share a timeline (`Score.append` would lay them end to end and pad the MusicXML with empty measures). `partName` values are Flute, Clarinet, Alto Sax, Tenor Sax, Trumpet, Mellophone, Trombone, Baritone, Tuba, Snare, Bass Drum. The score title and composer come from the show. Key signature comes from `show["key"]` via `music21.key.Key` (`Bb` is two flats, `sharps == -2`). Time signature from `meter`. Quarter notes, and rests where the token is `None`. A metronome mark is written on each part. `export_midi` writes a playable MIDI file of those same parts.
+
+`fieldshow build` also writes one PDF per section beside the show file: `parts/trumpet.pdf` and the rest of `SECTION_ORDER`. LilyPond does the engraving (`musicxml2ly`, then `lilypond --pdf`) from a one-staff MusicXML. `FIELDSHOW_ENGRAVER` or `FIELDSHOW_LILYPOND` selects the `lilypond` binary. `FIELDSHOW_MUSICXML2LY` selects the converter. Otherwise both are taken from `PATH`. The show gains `part_pdfs` (section to a relative path, or null) and `engrave_error` (a string, or null). A missing binary prints `PDF parts unavailable: LilyPond not found (set FIELDSHOW_ENGRAVER)` on stderr, stores null paths, and the build still exits 0. A non-zero engraver exit does the same for that part.
 
 `import_musicxml` reads the first part's notes into `melody` (rests dropped), copies that part's meter and key, and sets `chords` to `"C"` repeated once per measure. Other show fields can be the demo defaults. The result must pass `validate_intent` after a caller adds sets, or it may include the demo sets so a bare import is already a valid intent. Prefer copying `demo_show()` and replacing melody, key, meter, tempo (if present), and chords.
 
@@ -116,9 +119,10 @@ One position per set. `rotation` is 0 in this version (facing the front sideline
 - `POST /api/intent` JSON merge via `apply_intent`, then arrange and chart again
 - `POST /api/image` multipart field `image`, stored with `import_image`, path kept on the show
 - `GET /api/field-image` the stored bytes, or 404
+- `GET /api/part-pdf/{section}` the built PDF for that section (`application/pdf`), or 404 when `part_pdfs[section]` is null or the file is gone
 
-The page draws the football field, dots colored from the palette by section, the scrubber, the part names, and the uniform and flag text. Scrubbing calls `/api/frame`. No frontend build. Dark page, accent `#e8a838`.
+The page draws the football field, dots colored from the palette by section, the scrubber, the part names, a paper list, and the uniform and flag text. Each engraved part is a link to `/api/part-pdf/{section}`. A part with no PDF is marked unavailable and the `engrave_error` (or a short "not engraved" line) is shown in the list. There is no link in that case. Scrubbing calls `/api/frame`. No frontend build. Dark page, accent `#e8a838`. An intent that changes the title, author, key, meter, tempo, melody, or chords clears `part_pdfs` until the next build. The server does not run LilyPond.
 
 ## What is not inside this process
 
-No model weights, no FluidSynth, no MuseScore, no OpenMarch Electron app. PDF engraving and audio transcription are open questions.
+No model weights, no FluidSynth, no MuseScore, no OpenMarch Electron app. Part PDFs are LilyPond, run from `fieldshow build`, not from the request path (ADR 0004). Audio transcription is still an open question.

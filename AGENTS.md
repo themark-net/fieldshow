@@ -16,6 +16,8 @@ fieldshow build examples/fanfare.json -o /tmp/show.json
 fieldshow serve --show /tmp/show.json --port 8876
 ```
 
+`build` also writes `parts/<section>.pdf` beside the JSON when LilyPond is on `PATH` (or `FIELDSHOW_ENGRAVER`). A missing engraver is a stderr warning and null `part_pdfs`, not a failed build. The page serves them at `/api/part-pdf/{section}`.
+
 ## Ownership
 
 - `src/fieldshow/model.py`, `design.py`, `cli.py`, `drill/image.py`: stable. Extend them only when a test needs a new field.

@@ -32,6 +32,8 @@
     input[type="range"] { width: 100%; accent-color: var(--accent); }
     ul { list-style: none; padding: 0; margin: 0.4rem 0 0; }
     li { display: flex; justify-content: space-between; gap: 0.5rem; font-variant-numeric: tabular-nums; }
+    a { color: var(--accent); }
+    .unavailable { color: var(--muted); }
     button { background: transparent; color: var(--text); border: 1px solid var(--accent); padding: 0.3rem 0.7rem; }
   </style>
 </head>
@@ -51,6 +53,10 @@
         <p id="design"></p>
         <h2 class="muted">Parts</h2>
         <ul id="parts"></ul>
+        <h2 class="muted">Paper</h2>
+        <ul id="paper">
+          {{part_pdfs}}
+        </ul>
       </div>
     </div>
   </main>

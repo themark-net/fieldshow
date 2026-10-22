@@ -9,3 +9,4 @@ build/
 examples/assets/
 *.mid
 .om-out/
+tmp/
