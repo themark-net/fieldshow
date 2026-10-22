@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from fieldshow.model import demo_show, load_show
+from fieldshow.model import apply_intent, demo_show, load_show
 from fieldshow.web.app import create_app
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"field-ok" * 4
@@ -35,47 +37,152 @@ def _client(path: Path) -> TestClient:
     return TestClient(create_app(load_show(path), show_path=path), raise_server_exceptions=False)
 
 
+NAME64 = "n" * 64
+
+# One table for every refused value. _plant() puts a real file (or a directory,
+# or an unreadable file) at each value that is a creatable path inside the show
+# dir, so a refusal is the rule's doing, not a missing file.
 BAD = [
+    # traversal and absolute
     "../secret.png",
     "images/../../secret.png",
     "%2e%2e%2fsecret.png",
     "images/%2e%2e%2f%2e%2e%2fsecret.png",
     "/etc/passwd",
     "SECRET_ABS",
+    "ABS_LEGIT",
     "images/out.png",
     "images/field.png\x00",
     "show.json",
     "images/missing.png",
+    # non-canonical spellings of the real image
+    "images/./field.png",
+    "images/x/../field.png",
+    "images//field.png",
+    # name and extension rule (B1, T2), each file present on disk
+    "images/x.png\n",
+    "images/x.txt.png",
+    "images/x.png.txt",
+    "images/a.b.png",
+    "images/" + "n" * 65 + ".png",
+    "images/.png",
+    "images/\u212a.png",
+    "image\u017f/x.png",
+    "images/x.svg",
+    "images/x.json",
+    "images/field.txt",
+    "images/sub/x.png",
+    # not a readable regular file (S1, T1, T2)
+    "images/dir.png",
+    "images/unread.png",
 ]
+GOOD = ["images/" + NAME64 + ".png", "images/x.PNG"]
 
 
-def _value(bad: str, secret: Path) -> str:
-    return str(secret) if bad == "SECRET_ABS" else bad
+def _value(bad: str, secret: Path, show_dir: Path | None = None) -> str:
+    if bad == "SECRET_ABS":
+        return str(secret)
+    if bad == "ABS_LEGIT":
+        return str((show_dir or secret.parent / "show") / "images" / "field.png")
+    return bad
+
+
+def _plant(show_dir: Path, value: str) -> None:
+    """Create what a value names, when it is a plain relative path in the show dir."""
+    if value.startswith("/") or ".." in value or "%" in value or "\x00" in value:
+        return
+    if value in ("show.json", "images/missing.png"):
+        return
+    target = show_dir / value
+    if value == "images/dir.png":
+        target.mkdir(parents=True)
+        return
+    if target.exists() or target.is_symlink():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(PNG + b"-planted")
+    if value == "images/unread.png":
+        target.chmod(0)
+
+
+def _unprivileged(tmp_path: Path, check) -> None:
+    """Run ``check`` as a non-root uid, so file permissions apply even in a root container."""
+    if os.geteuid() != 0:
+        check()
+        return
+    for parent in [tmp_path, *tmp_path.parents]:
+        if str(parent) in ("/", "/tmp"):
+            break
+        parent.chmod(0o755)
+    for path in tmp_path.rglob("*"):
+        if path.is_dir() and not path.is_symlink() and path.name != "dir.png":
+            path.chmod(0o755)
+    pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            os.setgroups([])
+            os.setgid(65534)
+            os.setuid(65534)
+            check()
+            code = 0
+        except BaseException:
+            import traceback
+
+            traceback.print_exc()
+        finally:
+            os._exit(code)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0, "check failed as uid 65534"
 
 
 @pytest.mark.parametrize("bad", BAD)
 def test_intent_rejects_field_image_outside_images(tmp_path: Path, bad: str):
     path, secret = _show_dir(tmp_path, "images/field.png")
-    client = _client(path)
-    before = client.get("/api/show").json()
-    response = client.post("/api/intent", json={"field_image": _value(bad, secret)})
-    assert response.status_code == 422, response.text
-    assert "field_image" in response.json()["detail"]
-    assert client.get("/api/show").json() == before
-    served = client.get("/api/field-image")
-    assert served.status_code == 200
-    assert served.content == PNG
+    value = _value(bad, secret, path.parent)
+    _plant(path.parent, value)
+
+    def check() -> None:
+        client = _client(path)
+        before = client.get("/api/show").json()
+        response = client.post("/api/intent", json={"field_image": value})
+        assert response.status_code == 422, response.text
+        assert "field_image" in response.json()["detail"]
+        assert client.get("/api/show").json() == before
+        served = client.get("/api/field-image")
+        assert served.status_code == 200
+        assert served.content == PNG
+
+    _unprivileged(tmp_path, check)
 
 
 @pytest.mark.parametrize("bad", BAD)
 def test_serve_404s_a_tampered_field_image_in_the_show_json(tmp_path: Path, bad: str):
     """Written straight into show.json, so the intent check never ran."""
-    path, secret = _show_dir(tmp_path, _value(bad, secret_path := tmp_path / "secret.png"))
-    assert secret == secret_path
-    response = _client(path).get("/api/field-image")
-    assert response.status_code == 404, bad
-    assert SECRET not in response.content
-    assert b"root:" not in response.content
+    path, secret = _show_dir(tmp_path, None)
+    value = _value(bad, secret, path.parent)
+    _plant(path.parent, value)
+    path.write_text(json.dumps({**load_show(path), "field_image": value}))
+
+    def check() -> None:
+        response = _client(path).get("/api/field-image")
+        assert response.status_code == 404, bad
+        assert SECRET not in response.content
+        assert b"root:" not in response.content
+        assert b"-planted" not in response.content
+
+    _unprivileged(tmp_path, check)
+
+
+@pytest.mark.parametrize("good", GOOD)
+def test_boundary_names_are_accepted_and_served(tmp_path: Path, good: str):
+    path, _ = _show_dir(tmp_path, None)
+    _plant(path.parent, good)
+    client = _client(path)
+    assert client.post("/api/intent", json={"field_image": good}).status_code == 200
+    served = client.get("/api/field-image")
+    assert served.status_code == 200
+    assert served.content == PNG + b"-planted"
 
 
 def test_serve_404s_when_images_dir_points_outside_the_show(tmp_path: Path):
@@ -136,12 +243,44 @@ def test_serve_404s_on_a_symlink_loop_or_unreadable_images_dir(tmp_path: Path):
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("odd", ["ABS_LEGIT", "images/./field.png", "images/x/../field.png", "images//field.png"])
-def test_non_canonical_markers_are_refused_even_if_they_land_on_the_real_image(tmp_path: Path, odd: str):
-    """Only the exact images/<name>.<ext> marker is honoured, at intent and at serve."""
-    path, _ = _show_dir(tmp_path, None)
-    value = str(path.parent / "images" / "field.png") if odd == "ABS_LEGIT" else odd
-    response = _client(path).post("/api/intent", json={"field_image": value})
-    assert response.status_code == 422, response.text
-    path.write_text(json.dumps({**load_show(path), "field_image": value}))
-    assert _client(path).get("/api/field-image").status_code == 404
+
+def test_apply_intent_itself_refuses_a_bad_field_image():
+    """``fieldshow apply`` has no HTTP handler in front of it, so this check stands alone."""
+    show = demo_show()
+    for bad in ("../x.png", "/etc/passwd", "images/x.txt", "images/\u212a.png", 7):
+        with pytest.raises(ValueError, match="field_image"):
+            apply_intent(show, {"field_image": bad})
+    assert apply_intent(show, {"field_image": "images/field.png"})["field_image"] == "images/field.png"
+    assert apply_intent(show, {"field_image": None})["field_image"] is None
+
+
+def test_cli_import_image_writes_beside_the_output_not_cwd(tmp_path: Path):
+    out_dir = tmp_path / "out"
+    elsewhere = tmp_path / "cwd"
+    out_dir.mkdir()
+    elsewhere.mkdir()
+    src = tmp_path / "pic.png"
+    src.write_bytes(PNG)
+    show = out_dir / "show.json"
+    show.write_text(json.dumps(demo_show()))
+    run = subprocess.run(
+        [sys.executable, "-m", "fieldshow", "import-image", str(show), str(src), "-o", str(show)],
+        cwd=elsewhere,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+    )
+    assert run.returncode == 0, run.stderr
+    assert (out_dir / "images" / "field.png").read_bytes() == PNG
+    assert not (elsewhere / "images").exists()
+    assert load_show(show)["field_image"] == "images/field.png"
+
+
+def test_non_image_upload_is_415_and_leaves_the_show(tmp_path: Path):
+    path, _ = _show_dir(tmp_path, "images/field.png")
+    client = _client(path)
+    before = client.get("/api/show").json()
+    response = client.post("/api/image", files={"image": ("evil.exe", b"MZ", "application/octet-stream")})
+    assert response.status_code == 415
+    assert client.get("/api/show").json() == before
+    assert client.get("/api/field-image").content == PNG

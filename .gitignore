@@ -6,7 +6,6 @@ __pycache__/
 dist/
 build/
 .project-map/
-examples/assets/
 *.mid
 .om-out/
 tmp/

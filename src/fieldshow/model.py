@@ -132,12 +132,16 @@ def save_show(show: dict, path: str | Path) -> None:
 
 
 FIELD_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
-_FIELD_IMAGE = re.compile(r"images/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(png|jpg|jpeg|webp|gif)", re.IGNORECASE)
+_FIELD_IMAGE = re.compile(r"images/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(png|jpg|jpeg|webp|gif)", re.IGNORECASE | re.ASCII)
 FIELD_IMAGE_RULE = "field_image must be null or images/<name>.png|jpg|jpeg|webp|gif inside the show directory"
 
 
 def field_image_ok(value: object) -> bool:
-    """The stored form only: null, or ``images/<name>.<ext>`` with no other path parts."""
+    """The stored form only: null, or ``images/<name>.<ext>`` with no other path parts.
+
+    ``re.ASCII`` matters: without it IGNORECASE folds the Kelvin sign, dotless i and
+    long s onto ASCII letters, so ``imageſ/`` would match ``images/``.
+    """
     if value is None:
         return True
     return isinstance(value, str) and _FIELD_IMAGE.fullmatch(value) is not None

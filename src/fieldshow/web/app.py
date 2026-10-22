@@ -86,7 +86,12 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
         suffix = Path(image.filename or "field.png").suffix or ".png"
         incoming = app.state.assets / f"upload{suffix}"
         incoming.write_bytes(await image.read())
-        app.state.show = import_image(app.state.show, incoming, app.state.assets)
+        try:
+            app.state.show = import_image(app.state.show, incoming, app.state.assets)
+        except ValueError as exc:
+            raise HTTPException(status_code=415, detail=str(exc)) from exc
+        finally:
+            incoming.unlink(missing_ok=True)
         return {"field_image": app.state.show["field_image"]}
 
     @app.get("/api/field-image")
@@ -155,7 +160,8 @@ def _field_image_file(app: FastAPI, value: object) -> Path | None:
 
     The stored string is checked again here, because a show JSON on disk is not
     an intent. Each root's ``images/`` must resolve inside that root, and the file
-    must resolve inside that ``images/`` and be a real file.
+    must resolve inside that ``images/``, be a regular file, and open for reading,
+    so an unreadable file is refused here instead of failing mid-response.
     """
     if value is None or not field_image_ok(value):
         return None
@@ -170,6 +176,8 @@ def _field_image_file(app: FastAPI, value: object) -> Path | None:
                 continue
             path = (Path(root) / str(value)).resolve()
             if path.is_relative_to(images) and path.is_file():
+                with path.open("rb"):
+                    pass
                 return path
         except (ValueError, OSError, RuntimeError):
             continue
