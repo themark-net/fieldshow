@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -284,3 +285,29 @@ def test_non_image_upload_is_415_and_leaves_the_show(tmp_path: Path):
     assert response.status_code == 415
     assert client.get("/api/show").json() == before
     assert client.get("/api/field-image").content == PNG
+
+
+def _without_blocking(fifo: Path, call) -> object:
+    """Run ``call``; if it blocks opening the FIFO, unblock it and fail."""
+    result: dict = {}
+    worker = threading.Thread(target=lambda: result.setdefault("value", call()), daemon=True)
+    worker.start()
+    worker.join(5)
+    if worker.is_alive():
+        os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+        worker.join(5)
+        pytest.fail("the server opened a FIFO named like an image")
+    return result["value"]
+
+
+def test_a_fifo_named_like_an_image_is_refused_without_blocking(tmp_path: Path):
+    """``is_file`` is what refuses a FIFO; opening one would hang the request."""
+    path, _ = _show_dir(tmp_path, None)
+    fifo = path.parent / "images" / "pipe.png"
+    os.mkfifo(fifo)
+    client = _client(path)
+    response = _without_blocking(fifo, lambda: client.post("/api/intent", json={"field_image": "images/pipe.png"}))
+    assert response.status_code == 422
+    path.write_text(json.dumps({**load_show(path), "field_image": "images/pipe.png"}))
+    tampered = _client(path)
+    assert _without_blocking(fifo, lambda: tampered.get("/api/field-image")).status_code == 404

@@ -8,46 +8,41 @@ Branch `build/3-field-image`, off `a803da2`, which is now `main` (T-0005 fast-fo
 
 ## What changed
 
-- `field_image` is now `null` or the marker `images/<name>.<ext>`: the name is 1 to 64 characters of `[A-Za-z0-9_-]` and starts with a letter or digit, and the extension is png, jpg, jpeg, webp or gif (`model.FIELD_IMAGE_RULE`, `field_image_ok`). Absolute paths, `..`, `./`, `//`, `%2e` and NUL never match.
+- `field_image` is now `null` or the marker `images/<name>.<ext>`: the name is 1 to 64 characters of `[A-Za-z0-9_-]` and starts with a letter or digit, and the extension is png, jpg, jpeg, webp or gif (`model.FIELD_IMAGE_RULE`, `field_image_ok`). The regex is `re.IGNORECASE | re.ASCII`; IGNORECASE alone (round 1) also matched the Kelvin sign, dotless i and long s, so `images/\u212a.png` and `imageſ/` passed. Absolute paths, `..`, `./`, `//`, `%2e` and NUL never match.
 - Intent time: `apply_intent` raises on a bad marker, and `/api/intent` maps ValueError to 422. The handler also returns 422 if the marker names no regular file inside `images/`. The show is unchanged on 422.
-- Serve time: `_field_image_file` checks the marker again. For the upload temp dir and the show dir it resolves `images/`, skips the root if `images/` resolves outside it, resolves the file, and requires `is_relative_to(images)` and `is_file()`. ValueError, OSError and RuntimeError (Python 3.12 symlink loop) become 404, as in the part-PDF route.
-- Uploads (`POST /api/image`) still go to the temp upload dir, stored as `images/field.<ext>`. The client filename is ignored, and nothing is written into the show dir.
-- `fieldshow import-image` copies to `<show json dir>/images/field.<ext>` and stores the marker. The `--assets` flag is gone.
+- Serve time: `_field_image_file` checks the marker again. For the upload temp dir and the show dir it resolves `images/`, skips the root if `images/` resolves outside it, resolves the file, and requires `is_relative_to(images)`, `is_file()`, and that the file opens for reading. An unreadable file is 422 at intent and 404 at serve. In round 1 it was accepted, then the response died mid-body with a PermissionError. ValueError, OSError and RuntimeError (Python 3.12 symlink loop) become 404, as in the part-PDF route.
+- Uploads (`POST /api/image`) still go to the temp upload dir, stored as `images/field.<ext>`. The client filename is ignored, and nothing is written into the show dir. A non-image suffix is now 415 (it was a 500), the show is unchanged, and the `upload.<suffix>` scratch file is deleted either way.
+- `fieldshow import-image` copies to `<show json dir>/images/field.<ext>` and stores the marker. The `--assets` flag is gone, and so is the `examples/assets/` line in `.gitignore`.
 - The bad `FIELDSHOW_ENGRAVE_TIMEOUT` test now covers abc, 0, -1, inf and nan. The parser already rejected all of them (`0 < value < inf`), so it is unchanged.
 - The decision is logged in `docs/ops/AUTONOMOUS-DECISIONS-2026-10-22.md`.
 
+## Migration
+
+Old `field_image` values (`examples/assets/field.png`, absolute paths, `/tmp/fieldshow-*/field.png`) still load. The page and other intents work, but `/api/field-image` now gives a silent 404 and the value stays in the show. To fix one, re-run `fieldshow import-image show.json <img> -o show.json`, which writes `images/field.<ext>` beside the show. Both repo JSONs (`examples/fanfare.json`, `docs/adr/0004-evidence/in/show.json`) have null, so nothing in the repo needs it.
+
 ## DoD → tests (`tests/test_field_image.py` unless noted)
+
+There is one refused-value table, `BAD`, with 28 rows. `_plant()` puts a real file at every row that is a creatable path in the show dir, so each refusal is the rule's doing, not a missing file. `images/dir.png` is a directory and `images/unread.png` is mode 0. Both table tests run their checks as a non-root uid. When pytest itself is root (a root container), `_unprivileged()` forks, drops to uid/gid 65534 and runs the check there, so the unreadable row is never skipped.
 
 | Item | Test |
 |---|---|
-| Reject at intent, 4xx, intent unchanged (`../`, absolute, symlink-out, NUL, %2e, show.json, missing) | `test_intent_rejects_field_image_outside_images[*]` (10 cases) |
-| Serve-time 404 from a tampered show JSON (same 10 values) | `test_serve_404s_a_tampered_field_image_in_the_show_json[*]` |
+| Intent 422 and show unchanged for every BAD row: traversal, absolute, symlink-out, NUL, `%2e`, non-canonical (`./`, `x/..`, `//`, absolute path to the real image), and the B1 name/ext set (`x.png\n`, `x.txt.png`, `x.png.txt`, `a.b.png`, a 65-char name, `.png`, Kelvin, `imageſ/`, `.svg`, `.json`, `field.txt`, `sub/x.png`), plus S1 `dir.png` and T1 `unread.png` | `test_intent_rejects_field_image_outside_images[*]` (28) |
+| Serve 404 for the same 28 rows written straight into show.json; no secret, `/etc/passwd` or planted bytes served | `test_serve_404s_a_tampered_field_image_in_the_show_json[*]` (28) |
+| Accepted controls: a 64-char name and `x.PNG`, 200 with the right bytes | `test_boundary_names_are_accepted_and_served[*]` (2) |
+| S3: `apply_intent` refuses on its own (what `fieldshow apply` relies on) | `test_apply_intent_itself_refuses_a_bad_field_image` |
+| S2: the CLI `import-image` writes `<dir of -o>/images/field.png`, not cwd | `test_cli_import_image_writes_beside_the_output_not_cwd` (subprocess, cwd elsewhere) |
+| Non-image upload gives 415 and the show is unchanged | `test_non_image_upload_is_415_and_leaves_the_show` |
 | `images/` symlinked outside the show | `test_serve_404s_when_images_dir_points_outside_the_show` |
-| Symlink loop, unreadable `images/` → 404, not 500 | `test_serve_404s_on_a_symlink_loop_or_unreadable_images_dir` (the chmod half skips as root) |
-| Non-canonical markers that resolve to the real image | `test_non_canonical_markers_are_refused_even_if_they_land_on_the_real_image[*]` |
+| Symlink loop or unreadable `images/` gives 404, not 500 | `test_serve_404s_on_a_symlink_loop_or_unreadable_images_dir` (the chmod half skips as root; the unreadable-file row above covers root) |
 | Legit image served with correct bytes; set and clear | `test_legit_field_image_is_served_and_can_be_set_and_cleared` |
 | Upload stored as a marker; traversal filename ignored | `test_upload_is_stored_as_a_marker_and_served` |
-| CLI import writes the marker | `tests/test_model.py` import test |
 | Timeout 0, -1, inf, nan, abc | `tests/test_part_pdfs.py::test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs[*]` |
 
-## Mutants
+## Mutants (round 2)
 
-Each mutant ran in a scratch copy, in `fieldshow:t0005` as the host uid. The tree was restored after every run (scratch only).
+MUTANTS_R2
 
-All CAUGHT. CLEAN ran green: 62 passed in the image after the non-canonical test was added. That test was added because S-regex survived the first run, at 58/58.
-
-| Mutant | Change | Result | Red line |
-|---|---|---|---|
-| I-both (intent guard removed) | drop the `apply_intent` raise; handler check `and False` | 14 failed | `test_intent_rejects_field_image_outside_images[/etc/passwd]` … `test_field_image.py:62: AssertionError: {"title":"Gate Fanfare"}` (422 expected) |
-| I-handler | handler file check only | 2 failed | `test_intent_rejects_…[images/out.png]`, `[images/missing.png]` |
-| S-serve (serve guard removed) | route back to raw `Path(path).is_file()` | 16 failed | `test_field_image.py:66: assert 404 == 200` plus the tampered serve cases |
-| S-contain | drop `is_relative_to(images)` | 2 failed | `test_serve_404s_a_tampered_field_image_in_the_show_json[images/out.png]` |
-| S-root | drop the images-inside-root check | 1 failed | `test_serve_404s_when_images_dir_points_outside_the_show` `:93: assert 200 == 404` |
-| S-regex | drop `field_image_ok` at serve | 4 failed | `test_non_canonical_markers_…[ABS_LEGIT]` `:147: assert 200 == 404` |
-| S-except | except → ZeroDivisionError | 1 failed | `test_serve_404s_on_a_symlink_loop_…` `:126: assert 500 == 404` |
-| T-nan | timeout parser `if value <= 0:` | 3 failed | `test_bad_engrave_timeout_…[inf]`, `[nan]` |
-
-Scripts: `tmp/mutants/run_3.sh` and `run_3b.sh` (gitignored). Logs: `/tmp/fs-3-mutants.log` and `/tmp/fs-3-mutants-b.log` on nimo.
+Round 1's "All CAUGHT" covered only its own 8 mutants. The Reviewer ran 29 and found 13 survivors: I1, `is_file`→`exists`, E-RT on 3.13, E-VE, 8 regex mutants, and the CLI cwd mutant. All of them are in the table above.
 
 ## Reviewer nits folded in (T-0005)
 
@@ -56,14 +51,10 @@ Scripts: `tmp/mutants/run_3.sh` and `run_3b.sh` (gitignored). Logs: `/tmp/fs-3-m
 
 ## Parked
 
-- An upload whose bytes fail `import_image` (bad extension or ValueError) still returns 500. This is pre-existing and was not in #3's scope.
-- Merge and redeploy belong to the parent. The Tester and Reviewer gates are pending. T-0005 is on main at `a803da2`, which is this branch's base.
+- Merge and redeploy belong to the parent. The Tester and Reviewer gates on this SHA are pending.
+- `deploy-maximum.md` gained first-time setup, a clean `git archive` export, and rollback via a `pre-*` tag. No Sysadmin notes were readable on the box or nimo, so it follows the brief. maximum was not touched.
+- The page still draws no field image (`index.html` has no reference; PROMPT-CARD's "draws it under the dots" predates #3).
 
 ## Evidence
 
-Run on nimo at code commit `d530bc8`. The commit after it changes docs only.
-
-- `docker build -t fieldshow:t0005 .`: exit 0, `#13 DONE 7.1s`
-- In-image pytest (`fieldshow:t0005`, Python 3.12, host uid, `:ro` mount): `62 passed, 1 warning in 41.82s`
-- Host pytest (Python 3.14): `60 passed, 2 skipped, 1 warning in 26.31s`. The 2 skips are the LilyPond engraving tests; the chmod half of the loop test runs here.
-- Files not owned by the host uid in the worktree: 0
+EVIDENCE_R2
