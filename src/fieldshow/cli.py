@@ -102,7 +102,7 @@ def cmd_import_musicxml(args: argparse.Namespace) -> int:
 
 def cmd_import_image(args: argparse.Namespace) -> int:
     show = load_show(args.show)
-    show = import_image(show, args.image, args.assets)
+    show = import_image(show, args.image, Path(args.output).resolve().parent)
     save_show(show, args.output)
     print(args.output)
     return 0
@@ -182,7 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
     img = sub.add_parser("import-image", help="attach a field picture")
     img.add_argument("show")
     img.add_argument("image")
-    img.add_argument("--assets", default="examples/assets")
     img.add_argument("-o", "--output", required=True)
     img.set_defaults(func=cmd_import_image)
 

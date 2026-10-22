@@ -22,7 +22,7 @@ intent JSON + optional image + optional MusicXML
 
 ## Show document
 
-`version` is 1. `melody` is one token per beat (`Bb4`, `F#5`, `C4`). `chords` is one symbol per measure (`Bb`, `F7`, `Gm`, `Cmaj7`). `meter` is `[beats, beat-value]`. `sets[].shapes` place sections. `design` is optional and holds `uniform`, `flag`, and `palette` (2 to 6 `#rrggbb` colors). `field_image` is a path or null. `performers` and `parts` are filled by `chart` and `arrange`.
+`version` is 1. `melody` is one token per beat (`Bb4`, `F#5`, `C4`). `chords` is one symbol per measure (`Bb`, `F7`, `Gm`, `Cmaj7`). `meter` is `[beats, beat-value]`. `sets[].shapes` place sections. `design` is optional and holds `uniform`, `flag`, and `palette` (2 to 6 `#rrggbb` colors). `field_image` is null or `images/<name>.<png|jpg|jpeg|webp|gif>` (one segment: letters, digits, `_`, `-`), relative to the show directory. `performers` and `parts` are filled by `chart` and `arrange`.
 
 `validate_intent` in `model.py` is the gate. Do not accept a show it rejects.
 
@@ -116,9 +116,9 @@ One position per set. `rotation` is 0 in this version (facing the front sideline
 - `GET /api/show` the built show
 - `GET /api/frame?beat=` interpolated positions, plus `beat` and `tempo`
 - `GET /api/playback` the playback list
-- `POST /api/intent` JSON merge via `apply_intent`, then arrange and chart again
-- `POST /api/image` multipart field `image`, stored with `import_image`, path kept on the show
-- `GET /api/field-image` the stored bytes, or 404
+- `POST /api/intent` JSON merge via `apply_intent`, then arrange and chart again. A rejected intent is 422 with the reason and the show is unchanged. A `field_image` must match the rule above and name an existing file under an allowed `images/`; anything else (`..`, absolute, `%2e`, NUL, a symlink out, a missing file) is 422.
+- `POST /api/image` multipart field `image`, copied to `images/field.<ext>` in the server's temp upload dir; the show stores `images/field.<ext>`. Nothing is written into the show directory.
+- `GET /api/field-image` the image, or 404. The stored string is checked again (a show JSON on disk is not an intent). Roots are the temp upload dir, then the show directory. For each, `images/` must resolve inside the root, and the file must resolve inside that `images/` and be a real file. `ValueError`, `OSError` and `RuntimeError` are 404, as for part PDFs.
 - `GET /api/part-pdf/{section}` the built PDF for that section (`application/pdf`). The section must be in `SECTION_ORDER`. `part_pdfs[section]` must be the marker `parts/<section>.pdf` (null and any other string, including a NUL, are 404). The file opened is always `<show_dir>/parts/<section>.pdf`, resolved, and it must stay inside that `parts/` directory (`is_relative_to`), `parts/` itself must resolve inside the show directory (a `parts` symlink to elsewhere is 404), and it must be a real file (missing or a symlink loop is 404). A symlink that resolves outside `parts/` is 404. `ValueError`, `OSError` and `RuntimeError` (a symlink loop on Python 3.12) are 404, not 500. The stored string is not opened.
 
 The page draws the football field, dots colored from the palette by section, the scrubber, the part names, a paper list, and the uniform and flag text. Each engraved part is a link to `/api/part-pdf/{section}`. A failed part is marked `unavailable: ` plus that section's short `part_errors` reason. The stderr tail, including `/tmp` paths, stays off the page (it may remain on stderr and in `engrave_error`). A missing engraver is one banner line plus `unavailable` on each row, not `unavailable: PDF parts unavailable`. A show that was never engraved says `unavailable: not engraved`. There is no link in those cases. Scrubbing calls `/api/frame`. No frontend build. Dark page, accent `#e8a838`. An intent that changes the title, author, key, meter, tempo, melody, or chords clears `part_pdfs` until the next build. A design-only intent keeps the links. The server does not run LilyPond.

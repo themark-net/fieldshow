@@ -58,4 +58,4 @@ fieldshow serve --show show.json --host 0.0.0.0 --port 8876
 
 ## Pictures
 
-If the user attaches a field photo or a chart image, call `import-image` and also describe what you see in the set names. This program stores the picture and draws it under the dots. It does not trace dots out of the photo. You place the shapes.
+If the user attaches a field photo or a chart image, call `import-image` and also describe what you see in the set names. `import-image` copies the picture to `images/field.<ext>` next to the output show and stores that relative name. In an intent, `field_image` may only be null or `images/<name>.png` (or jpg, jpeg, webp, gif) for a file already in that folder. This program stores the picture and draws it under the dots. It does not trace dots out of the photo. You place the shapes.

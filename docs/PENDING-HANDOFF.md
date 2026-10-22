@@ -2,6 +2,8 @@
 
 T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; no PR, not merged to main). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
 
+#3 (field_image path restriction) is on branch `build/3-field-image`, stacked on T-0005: see [ops/HANDOFF-3-field-image-2026-10-22.md](ops/HANDOFF-3-field-image-2026-10-22.md).
+
 ## What shipped
 
 `fieldshow build` arranges, charts, and writes one LilyPond PDF per section next to the show JSON (`parts/trumpet.pdf` and the other names in `SECTION_ORDER`). The show records `part_pdfs` (relative path or null) and `engrave_error`. The page links `GET /api/part-pdf/{section}` when a file exists and marks the part unavailable, with the reason, when it does not. The route returns 404 for a missing part. The server does not run LilyPond.

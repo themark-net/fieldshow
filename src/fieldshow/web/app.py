@@ -12,7 +12,14 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from fieldshow.drill.chart import chart, interpolate
 from fieldshow.drill.image import import_image
-from fieldshow.model import SECTION_ORDER, apply_intent, demo_show, load_show
+from fieldshow.model import (
+    FIELD_IMAGE_RULE,
+    SECTION_ORDER,
+    apply_intent,
+    demo_show,
+    field_image_ok,
+    load_show,
+)
 from fieldshow.music.arrange import arrange, playback
 from fieldshow.music.io import PART_NAMES
 
@@ -58,7 +65,16 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
 
     @app.post("/api/intent")
     def intent(body: dict) -> dict:
-        merged = apply_intent(app.state.show, body)
+        try:
+            merged = apply_intent(app.state.show, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if (
+            "field_image" in body
+            and merged.get("field_image") is not None
+            and _field_image_file(app, merged["field_image"]) is None
+        ):
+            raise HTTPException(status_code=422, detail=FIELD_IMAGE_RULE)
         if any(key in body for key in ("title", "author", "key", "meter", "tempo", "melody", "chords")):
             merged["part_pdfs"] = {section: None for section in SECTION_ORDER}
             merged["engrave_error"] = "parts changed; run fieldshow build to refresh PDFs"
@@ -75,8 +91,8 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
 
     @app.get("/api/field-image")
     def field_image() -> Response:
-        path = app.state.show.get("field_image")
-        if not path or not Path(path).is_file():
+        path = _field_image_file(app, app.state.show.get("field_image"))
+        if path is None:
             raise HTTPException(status_code=404, detail="no field image")
         return FileResponse(path)
 
@@ -132,6 +148,32 @@ def _paper_html(show: dict) -> str:
                 f'<li>{label} <span class="unavailable">unavailable: not engraved</span></li>'
             )
     return "\n".join(items)
+
+
+def _field_image_file(app: FastAPI, value: object) -> Path | None:
+    """``images/<name>`` under this server's upload dir or the show dir, else None.
+
+    The stored string is checked again here, because a show JSON on disk is not
+    an intent. Each root's ``images/`` must resolve inside that root, and the file
+    must resolve inside that ``images/`` and be a real file.
+    """
+    if value is None or not field_image_ok(value):
+        return None
+    roots = [app.state.assets]
+    if app.state.show_dir is not None:
+        roots.append(app.state.show_dir)
+    for root in roots:
+        try:
+            base = Path(root).resolve()
+            images = (Path(root) / "images").resolve()
+            if not images.is_relative_to(base):
+                continue
+            path = (Path(root) / str(value)).resolve()
+            if path.is_relative_to(images) and path.is_file():
+                return path
+        except (ValueError, OSError, RuntimeError):
+            continue
+    return None
 
 
 def _part_pdf_file(app: FastAPI, section: str) -> Path | None:

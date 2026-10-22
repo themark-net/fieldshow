@@ -42,7 +42,8 @@ def test_design_palette_bounds():
 def test_image_import_copies_a_png(tmp_path: Path):
     src = tmp_path / "yard.png"
     src.write_bytes(b"\x89PNG\r\n\x1a\n")
-    show = import_image(demo_show(), src, tmp_path / "assets")
-    copied = Path(show["field_image"])
+    show = import_image(demo_show(), src, tmp_path / "show")
+    assert show["field_image"] == "images/field.png"
+    copied = tmp_path / "show" / show["field_image"]
     assert copied.is_file()
     assert copied.read_bytes().startswith(b"\x89PNG")

@@ -571,7 +571,8 @@ def test_part_pdf_route_404s_when_parts_dir_points_outside_the_show(tmp_path: Pa
     assert b"ELSEWHERE" not in response.content
 
 
-def test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs(tmp_path: Path):
+@pytest.mark.parametrize("value", ["abc", "0", "-1", "inf", "nan"])
+def test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs(tmp_path: Path, value: str):
     parts = tmp_path / "parts"
     parts.mkdir()
     old = {section: f"%PDF-1.4\n%old-{section}\n".encode() for section in SECTION_ORDER}
@@ -580,10 +581,10 @@ def test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs(tmp_path: Path):
     out = tmp_path / "show.json"
     out.write_text('{"previous": true}')
     env = _fake_tools(tmp_path / "bin", _exit_4_lilypond())
-    env["FIELDSHOW_ENGRAVE_TIMEOUT"] = "abc"
+    env["FIELDSHOW_ENGRAVE_TIMEOUT"] = value
     result = _build(out, env)
     assert result.returncode == 2
-    assert "FIELDSHOW_ENGRAVE_TIMEOUT must be a positive number of seconds, got 'abc'" in result.stderr
+    assert f"FIELDSHOW_ENGRAVE_TIMEOUT must be a positive number of seconds, got {value!r}" in result.stderr
     assert "Traceback" not in result.stderr
     assert out.read_text() == '{"previous": true}'
     for section, data in old.items():

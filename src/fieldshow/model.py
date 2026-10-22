@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 from music21 import pitch
@@ -130,6 +131,18 @@ def save_show(show: dict, path: str | Path) -> None:
     dest.write_text(json.dumps(show, indent=2) + "\n")
 
 
+FIELD_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+_FIELD_IMAGE = re.compile(r"images/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.(png|jpg|jpeg|webp|gif)", re.IGNORECASE)
+FIELD_IMAGE_RULE = "field_image must be null or images/<name>.png|jpg|jpeg|webp|gif inside the show directory"
+
+
+def field_image_ok(value: object) -> bool:
+    """The stored form only: null, or ``images/<name>.<ext>`` with no other path parts."""
+    if value is None:
+        return True
+    return isinstance(value, str) and _FIELD_IMAGE.fullmatch(value) is not None
+
+
 def apply_intent(show: dict, intent: dict) -> dict:
     """Merge an agent intent over a show. Shallow on known keys, replace sets."""
     out = copy.deepcopy(show)
@@ -151,6 +164,8 @@ def apply_intent(show: dict, intent: dict) -> dict:
     ):
         if key in intent:
             out[key] = copy.deepcopy(intent[key])
+    if "field_image" in intent and not field_image_ok(intent["field_image"]):
+        raise ValueError(FIELD_IMAGE_RULE)
     problems = validate_intent(out)
     if problems:
         raise ValueError("; ".join(problems))
