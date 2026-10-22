@@ -1,6 +1,6 @@
 # Handoff: #3 field_image path restriction, 2026-10-22
 
-Branch `build/3-field-image`, off `a803da2`, which is now `main` (T-0005 fast-forwarded). Pushed to origin, no PR, not merged to main.
+Branch `build/3-field-image`, off `a803da2`. Tester and Reviewer both passed `e786df3`, and main was fast-forwarded to `e786df3`. No PR. Later commits on the branch change docs only.
 
 ## Problem
 
@@ -89,8 +89,8 @@ Round 1's "All CAUGHT" covered only its own 8 mutants. The Reviewer ran 29 and f
 
 ## Parked
 
-- Merge and redeploy belong to the parent. The Tester and Reviewer gates on this SHA are pending.
-- `deploy-maximum.md` gained first-time setup, a clean `git archive` export, and rollback via a `pre-*` tag. No Sysadmin notes were readable on the box or nimo, so it follows the brief. maximum was not touched.
+- Main is at `e786df3` (fast-forward after the double PASS). Redeploying maximum belongs to Sysadmin and the parent; follow `docs/ops/deploy-maximum.md`.
+- `deploy-maximum.md` gained first-time setup, a clean `git archive` export, and rollback via a `pre-*` tag. Sysadmin's corrections are folded in: the update reruns `fieldshow build`, the IPv6 pull retry, the current rollback image `fieldshow:pre-a803da2`, and moving the override aside for pre-`a803da2` images. No Sysadmin notes were readable on the box or nimo, so it follows the brief. maximum was not touched.
 - The page still draws no field image (`index.html` has no reference; PROMPT-CARD's "draws it under the dots" predates #3).
 
 ## Evidence

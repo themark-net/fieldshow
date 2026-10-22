@@ -2,7 +2,7 @@
 
 T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; fast-forwarded to main at `a803da2`). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
 
-#3 (field_image path restriction) is on branch `build/3-field-image`, stacked on T-0005: see [ops/HANDOFF-3-field-image-2026-10-22.md](ops/HANDOFF-3-field-image-2026-10-22.md).
+#3 (field_image path restriction) passed Tester and Reviewer at `e786df3` and was fast-forwarded to main there (branch `build/3-field-image`). See [ops/HANDOFF-3-field-image-2026-10-22.md](ops/HANDOFF-3-field-image-2026-10-22.md).
 
 ## What shipped
 
@@ -69,7 +69,7 @@ The container still serves the sample intent until a built show is mounted. Pape
 
 ## Deploy
 
-Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`: rsync the tree, then `docker compose up -d --build`. The engraver is in the image (`Dockerfile` installs `lilypond`). Expect the image to grow by the LilyPond stack described above. Do not rely on a host install of LilyPond. `QT_QPA_PLATFORM` is not required. LilyPond is not a Qt program. PDFs are produced by `fieldshow build`, not by the server: to serve linked parts on maximum, run the build (inside the image is fine) and bind-mount the directory holding `show.json` and its `parts/` (e.g. at `/data`, `FIELDSHOW_SHOW=/data/show.json`). Mounting only the JSON file leaves the parts marked unavailable.
+Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`. Its Update section covers tagging the running image `fieldshow:pre-<old sha>`, the rsync of a clean `git archive` export, then `docker compose build`, `fieldshow build` and `up -d --no-build --force-recreate fieldshow`. The engraver is in the image (`Dockerfile` installs `lilypond`). Expect the image to grow by the LilyPond stack described above. Do not rely on a host install of LilyPond. `QT_QPA_PLATFORM` is not required. LilyPond is not a Qt program. PDFs are produced by `fieldshow build`, not by the server: to serve linked parts on maximum, run the build (inside the image is fine) and bind-mount the directory holding `show.json` and its `parts/` (e.g. at `/data`, `FIELDSHOW_SHOW=/data/show.json`). Mounting only the JSON file leaves the parts marked unavailable.
 
 ## Round 2
 
