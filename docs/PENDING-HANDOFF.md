@@ -71,7 +71,7 @@ Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`: rsync the
 
 ## Round 2
 
-Tester and Reviewer both FAILed `3c9fca0`: the parts engraved, and the tests did not lock the behavior. This round is still local on `build/t0005-part-pdfs`. Nothing was pushed. No PR. No CI workflow was added.
+Tester and Reviewer both FAILed `3c9fca0`: the parts engraved, and the tests did not lock the behavior. Pushed to `build/t0005-part-pdfs` with a normal push. No PR, no merge. No CI workflow was added.
 
 ### What changed
 
@@ -84,7 +84,7 @@ Tester and Reviewer both FAILed `3c9fca0`: the parts engraved, and the tests did
 - **Q9.** `POST /api/intent` with `tempo` clears the links and the route is 404. A design-only intent keeps the links.
 - **Timeout.** Both engraver subprocesses use `start_new_session=True` and `Popen.communicate(timeout=...)`. On `TimeoutExpired`, `os.killpg(pid, SIGKILL)` kills the grandchild. `FIELDSHOW_ENGRAVE_TIMEOUT` is seconds, default 120. The fake `lilypond` backgrounds `sleep 300`, records the pid, and sleeps. With the timeout at 2s the build exits 0, the short reason is `timed out`, and each child pid is gone (`ProcessLookupError` or a reaped zombie).
 - **Evidence.** `docs/adr/0004-evidence/` holds the eval Dockerfile, `render.sh`, the out2 commands, the small input MusicXML, pdfinfo and pdftotext logs, and `contact-sheet.png` (MuseScore vs LilyPond, trumpet and simultaneous full score, MuseScore page 2). About 384 KB. ADR 0004 links it and records that the MuseScore lean was the CEO's daily product touch (the ticket brief), and that these pages overrode it.
-- **Deploy.** `docs/ops/deploy-maximum.md` mounts the show directory (`-v /path/showdir:/data`, `FIELDSHOW_SHOW=/data/show.json`) and shows how to run `fieldshow build` in the image.
+- **Deploy.** `docs/ops/deploy-maximum.md` mounts the whole show directory through a `compose.override.yaml` on maximum (`/home/mark/fieldshow-data:/data`, `FIELDSHOW_SHOW=/data/show.json`), builds with `docker compose run --rm --user ... fieldshow fieldshow build /data/intent.json -o /data/show.json`, and checks `/api/part-pdf/trumpet` for `200 application/pdf`. The rsync now excludes `tmp/` (worktrees) and the override. That compose run flow was smoke-tested on nimo with a throwaway project (no ports published): 11 PDFs.
 - **AGENTS.md** names `musicxml2ly` and `FIELDSHOW_MUSICXML2LY`.
 
 ### Verification
