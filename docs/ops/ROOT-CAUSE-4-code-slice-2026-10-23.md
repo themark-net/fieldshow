@@ -370,3 +370,21 @@ Verdict: two MUSTs in the root-only test harness, five should-fixes. Production 
 ### R3 outcome
 
 Fixed as planned. Red-first at `a7d2e06`, the 10-mutant table (10 killed), and the host and in-image counts are in the handoff, section "Round 3". The same round also moved the scratch write inside the `try` (SF1) and pinned empty body 415 (SF2).
+
+## Round 4 (Tester FAIL at `85e1b1b`, Reviewer PASS, 2026-10-23)
+
+### R4 B1: `/tmp/fieldshow-*` still leaks when the server gets SIGTERM
+
+- Symptom: each `fieldshow serve` stopped with `kill` (SIGTERM) leaves one `fieldshow-*` dir. SIGINT leaves none. This is how `kill`, systemd and `docker stop` end the server, and it fits the 1248 dirs on nimo.
+- Where: `src/fieldshow/web/app.py` `create_app` (`mkdtemp` at line 68, `weakref.finalize` at line 71); the server runs through `uvicorn.run` in `src/fieldshow/cli.py` `cmd_serve`.
+- Root cause, confirmed on nimo at `85e1b1b` with uvicorn 0.54.0 and a private TMPDIR: on SIGTERM uvicorn shuts down gracefully ("Application shutdown complete"), then restores the default handler and re-raises the signal. The process dies by signal (rc 143), so neither `weakref.finalize` nor `atexit` runs. On SIGINT the same shutdown ends in a normal interpreter exit (rc 0) and the finalizer removes the dir. Probe: SIGTERM rc=143, dir left; SIGINT rc=0, dir removed.
+- Why the suite missed it: `test_process_exit_removes_the_assets_dir` only covers a clean `python -c` exit.
+- Planned fix: remove the dir in the FastAPI lifespan shutdown, which uvicorn runs before the re-raise. Keep the finalizer as the backup for apps that never run a lifespan (most tests) and for GC.
+- Planned tests: start `python -m fieldshow serve --host 127.0.0.1` on a free port with a private TMPDIR, wait for `/api/health`, send SIGTERM or SIGINT, and assert no `fieldshow-*` is left; plus a lifespan test (`with TestClient(app)`) that asserts the dir is gone as soon as the lifespan ends, without GC. SIGTERM is red at `85e1b1b`.
+- Planned mutant: drop the lifespan cleanup.
+
+### R4 should-fixes
+
+- Tester S1 / Reviewer SF-A: a wrong temp-root guess, or a basetemp parent without `o+x`, turns the uid 65534 tests into skips and the run stays green (Tester mutant U3). Under root, or with `FIELDSHOW_REQUIRE_CHILD=1`, that skip becomes a failure; a direct test pins the temp root to `pytest-of-<user>` when pytest made it.
+- Tester S2: no test pins the `RIFF` prefix for WebP (mutant T3). Add `XXXX....WEBP` to the not-an-image table.
+- Reviewer uncovered mutants: the `getppid` check, the guardian's mode check, and the guardian's own session. Each gets a direct test.
