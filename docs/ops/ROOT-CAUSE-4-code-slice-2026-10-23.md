@@ -112,3 +112,36 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 ### Fix
 
 `_sniffed_image_suffix` in `web/app.py` picks `.png` / `.jpg` / `.gif` / `.webp` from the magic bytes, each checked against `FIELD_IMAGE_SUFFIXES`. A miss is 415 before the scratch file is written. `import_image` and the CLI are unchanged. Full suite: `111 passed, 2 skipped` in 26.92s.
+
+## Item 3 — `_unprivileged` chmod scope and `waitpid`
+
+### Symptom
+
+As root, `_unprivileged` (`tests/test_field_image.py:109`) chmods every ancestor of `tmp_path` to `0o755` until the path is `/` or `/tmp` (`test_field_image.py:114-117`). Pytest's own basetemp is not the boundary. A temp dir that is not under `/tmp` (a `TMPDIR` under the home directory, for example) gets its parents opened all the way up. The same helper then blocks in `os.waitpid(pid, 0)` (`test_field_image.py:136`). A check that never returns hangs the suite. There is no kill and no deadline.
+
+This session runs as uid 1000, so the `euid == 0` branch does not run here. The two pieces have to be testable without being root.
+
+### Where
+
+`tests/test_field_image.py:114-117` and `tests/test_field_image.py:136`.
+
+### Hypothesis
+
+The chmod walk's only stop is the string `"/" ` or `"/tmp"`, so the scoped root is not an input. `os.waitpid(pid, 0)` waits forever. Extracting those two loops into helpers, without changing what they do, makes the old behaviour callable as uid 1000. The helpers are still wrong until they honor a stop directory and a deadline.
+
+### Planned surgical fix
+
+First extract, behaviour unchanged: `_open_up_dirs(tmp_path, stop)` still walks to `/` or `/tmp` and ignores `stop`. `_wait_child(pid, timeout)` still calls `os.waitpid(pid, 0)` and ignores `timeout`. `_unprivileged` calls them with `stop=tmp_path.parent` (pytest's basetemp for this fixture) and `timeout=60`.
+
+Then change the helpers only. `_open_up_dirs` chmods from `tmp_path` up through `stop` inclusive, and breaks on `stop`, `/`, or `/tmp`, so a directory above `stop` stays `0o700`. `_wait_child` polls `os.WNOHANG` until `timeout` (60s from `_unprivileged`), then `SIGKILL`, reaps, and raises a message that says the child was killed. The `rglob` chmod of directories inside `tmp_path` stays.
+
+### Planned test
+
+No root. `test_open_up_dirs_stops_at_the_scoped_root`: build `above/scoped/nested/inner` under `tmp_path`, mode `0o700`, call `_open_up_dirs(inner, scoped)`. `above` stays `0o700`. `scoped`, `nested`, and `inner` become `0o755`. A `finally` puts every ancestor mode back, including dirs the old walk opens above `tmp_path`.
+
+`test_wait_child_kills_a_hung_child_within_the_timeout`: fork a child that sleeps for an hour, call `_wait_child(pid, 1)` on a daemon thread, `join(10)`. The helper raises within that window and the child is reaped. If the thread is still alive at 10s, the test kills the child and fails. That is what makes the red run finish.
+
+### Planned mutant
+
+1. `_open_up_dirs` ignores `stop` and walks to `/` or `/tmp` again. `above` becomes `0o755`.
+2. `_wait_child` blocks in `os.waitpid(pid, 0)`. The daemon-thread join hits 10s and the test fails.
