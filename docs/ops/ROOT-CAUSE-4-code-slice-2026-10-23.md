@@ -271,3 +271,43 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 ### Fix
 
 The handler returns 415 when `Path(filename).suffix.lower()` is non-empty and not in `FIELD_IMAGE_SUFFIXES`, before `image.read()` and before any scratch file. The sniff still chooses the stored suffix. Full suite: `117 passed, 2 skipped` in 28.05s.
+
+## Item 3 r2 — `_unprivileged` under root after the chmod-scope fix (verification pass, 2026-10-23)
+
+### Symptom
+
+In-image pytest as root (`docker build -t fieldshow:4-code-slice .` at `44d295e`, then pytest in that image as uid 0): **56 failed, 63 passed, 2 skipped**. Every `test_intent_rejects_field_image_outside_images[*]` and `test_serve_404s_a_tampered_field_image_in_the_show_json[*]` case fails with `check failed as uid 65534`. On the host (uid 1000) the fork path never runs, so the suite was green.
+
+### Where
+
+`tests/test_field_image.py` `_unprivileged` → `_open_up_dirs(tmp_path, tmp_path.parent)`.
+
+### Hypothesis
+
+The uid 65534 child needs search (`x`) permission on every ancestor of `tmp_path`. pytest creates `/tmp/pytest-of-root` (and the numbered basetemp) `0700`. The item 3 fix stops at basetemp, so `/tmp/pytest-of-root` stays `0700` and the child gets `EACCES` on every path below it. The pre-fix helper opened it (to `0755`, permanently), which is why `origin/main` passed as root.
+
+### Planned surgical fix
+
+Replace the walk with a context manager `_reachable_by_others(tmp_path)`. For every ancestor of `tmp_path` up to `/` that lacks `o+x`, add only `S_IXOTH` (search, not read or write), run the child, then put every changed mode back exactly. Directories that already have `o+x` (`/`, `/tmp`) are not touched. `tmp_path`'s own tree keeps the existing `0755` treatment. Same code for root and uid 1000; only root forks.
+
+### Planned test
+
+`test_reachable_by_others_adds_only_search_and_restores` (uid 1000, no root needed): a chain `tmp_path/above(0700)/mid(0750)/leaf`. Inside the context every ancestor of `leaf` up to `/` has `o+x`; `above` is `0701` and `mid` `0751` (no read added). After the context, every ancestor's mode equals its snapshot. On nimo `/tmp/pytest-of-mark` is `0700`, so the stop-at-basetemp behaviour is caught there too. End to end: the same in-image root run must go from 56 failed to 0 failed.
+
+### Planned mutants
+
+1. Stop at basetemp again (the `44d295e` behaviour). 2. `chmod(0o755)` instead of `mode | S_IXOTH`. 3. Skip the restore.
+
+## Item 1 r2 — the `finally` unlink only-on-success mutant survives at `44d295e`
+
+### Symptom
+
+Re-running mutant "unlink only in `else`" at `44d295e`: **survived** (85 passed). It was killed at `be1c4eb`, before the sniff and the early suffix check.
+
+### Hypothesis
+
+After items 2 and 4, every body that reaches the scratch write is a sniffed image with an allowed suffix, so `import_image` no longer raises `ValueError` on that path. The 415-after-write branch is unreachable from HTTP, so no request can tell `finally` from `else`.
+
+### Planned test
+
+`test_scratch_is_removed_when_import_fails_after_the_write`: monkeypatch `fieldshow.web.app.import_image` to raise `ValueError`, upload a real PNG, expect 415, show unchanged, no `upload*` in assets. This is the handler's cleanup contract for any later failure after the write. No production change.
