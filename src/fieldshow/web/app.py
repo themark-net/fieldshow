@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import os
 import shutil
+import stat
 import tempfile
 import weakref
 from html import escape
@@ -54,6 +56,53 @@ def _sniffed_image_suffix(data: bytes) -> str | None:
     return None
 
 
+class _AssetsDir:
+    """This app's private upload dir.
+
+    Made by ``mkdtemp`` (mode 0700, this euid) and remembered by device and
+    inode. It is used, and removed, only while ``lstat`` still shows that same
+    real dir with that owner and mode. A name freed by an earlier cleanup is
+    never taken back: in a shared TMPDIR whatever sits there now may belong to
+    someone else, so the next use gets a fresh ``mkdtemp``.
+    """
+
+    def __init__(self) -> None:
+        self.path: Path | None = None
+        self._ident: tuple[int, int] | None = None
+
+    def current(self) -> Path | None:
+        """The dir if it is still the one we made, else None."""
+        if self.path is None:
+            return None
+        try:
+            st = os.lstat(self.path)
+        except OSError:
+            return None
+        if (
+            stat.S_ISDIR(st.st_mode)
+            and (st.st_dev, st.st_ino) == self._ident
+            and st.st_uid == os.geteuid()
+            and stat.S_IMODE(st.st_mode) == 0o700
+        ):
+            return self.path
+        return None
+
+    def ensure(self) -> Path:
+        path = self.current()
+        if path is None:
+            path = Path(tempfile.mkdtemp(prefix="fieldshow-"))
+            st = os.lstat(path)
+            self.path, self._ident = path, (st.st_dev, st.st_ino)
+        return path
+
+    def remove(self) -> None:
+        """Remove the dir only if it is still ours; then forget it either way."""
+        path = self.current()
+        if path is not None:
+            shutil.rmtree(path, ignore_errors=True)
+        self.path = self._ident = None
+
+
 def _rebuild(show: dict) -> dict:
     built = arrange(show)
     return chart(built)
@@ -65,24 +114,31 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
     else:
         show = copy.deepcopy(show)
 
-    assets = Path(tempfile.mkdtemp(prefix="fieldshow-"))
+    assets = _AssetsDir()
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
-        # The server's shutdown is the one cleanup that runs on SIGTERM:
-        # uvicorn shuts down, then re-raises the signal, so neither the
-        # finalizer below nor atexit gets a chance.
-        assets.mkdir(mode=0o700, exist_ok=True)
+        # The dir is made here, not in create_app: uvicorn has its signal
+        # handlers in place by now, so a SIGTERM during startup still reaches
+        # the shutdown below. The shutdown is the one cleanup that runs on
+        # SIGTERM: uvicorn shuts down, then re-raises the signal, so neither
+        # the finalizer below nor atexit gets a chance.
+        assets.remove()
+        _app.state.assets = assets.ensure()
         try:
             yield
         finally:
-            shutil.rmtree(assets, ignore_errors=True)
+            assets.remove()
+            _app.state.assets = None
 
     app = FastAPI(title="Fieldshow", lifespan=lifespan)
-    app.state.assets = assets
+    app.state.assets_dir = assets
+    # The path of the dir in use, for tests and callers; None until an upload
+    # or a lifespan makes one.
+    app.state.assets = None
     # Backup for an app that never ran a lifespan (tests, embedding), or an
-    # interpreter that exits normally. ignore_errors: the dir may be gone already.
-    weakref.finalize(app, shutil.rmtree, assets, True)
+    # interpreter that exits normally. remove() checks the dir is still ours.
+    weakref.finalize(app, assets.remove)
     app.state.show_dir = Path(show_path).resolve().parent if show_path else None
     app.state.show = _rebuild(show)
 
@@ -129,6 +185,8 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
     async def upload_image(image: UploadFile = File(...)) -> dict:
         # A present client suffix has to be an image suffix before any scratch file exists.
         # The stored name still comes from the bytes, not from this suffix.
+        assets = app.state.assets_dir.ensure()
+        app.state.assets = assets
         client_suffix = Path(image.filename or "").suffix
         if client_suffix and client_suffix.lower() not in FIELD_IMAGE_SUFFIXES:
             raise HTTPException(
@@ -142,10 +200,14 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
                 status_code=415,
                 detail="field image must be png, jpg, webp, or gif",
             )
-        incoming = app.state.assets / f"upload{suffix}"
+        images = assets / "images"
+        if images.is_symlink() or (images.exists() and not images.is_dir()):
+            # Never write through a link; this dir is 0700 and ours, so this is a fault.
+            raise HTTPException(status_code=500, detail="upload images dir is not a real dir")
+        incoming = assets / f"upload{suffix}"
         try:
             incoming.write_bytes(data)
-            app.state.show = import_image(app.state.show, incoming, app.state.assets)
+            app.state.show = import_image(app.state.show, incoming, assets)
         except ValueError as exc:
             raise HTTPException(status_code=415, detail=str(exc)) from exc
         finally:
@@ -223,7 +285,8 @@ def _field_image_file(app: FastAPI, value: object) -> Path | None:
     """
     if value is None or not field_image_ok(value):
         return None
-    roots = [app.state.assets]
+    assets = app.state.assets_dir.current()
+    roots = [assets] if assets is not None else []
     if app.state.show_dir is not None:
         roots.append(app.state.show_dir)
     for root in roots:
