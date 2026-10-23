@@ -106,15 +106,36 @@ def _plant(show_dir: Path, value: str) -> None:
         target.chmod(0)
 
 
+_CHILD_WAIT_SECONDS = 60
+
+
+def _open_up_dirs(tmp_path: Path, stop: Path) -> None:
+    """chmod 0755 from ``tmp_path`` upward, stopping at ``/`` or ``/tmp``.
+
+    ``stop`` is the scoped root the caller passes (pytest's basetemp). This
+    extraction still ignores it.
+    """
+    del stop
+    for parent in [tmp_path, *tmp_path.parents]:
+        if str(parent) in ("/", "/tmp"):
+            break
+        parent.chmod(0o755)
+
+
+def _wait_child(pid: int, timeout: float) -> int:
+    """Block until ``pid`` exits. ``timeout`` is not applied yet."""
+    del timeout
+    _done, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status)
+
+
 def _unprivileged(tmp_path: Path, check) -> None:
     """Run ``check`` as a non-root uid, so file permissions apply even in a root container."""
     if os.geteuid() != 0:
         check()
         return
-    for parent in [tmp_path, *tmp_path.parents]:
-        if str(parent) in ("/", "/tmp"):
-            break
-        parent.chmod(0o755)
+    # tmp_path.parent is pytest's basetemp for this fixture.
+    _open_up_dirs(tmp_path, tmp_path.parent)
     for path in tmp_path.rglob("*"):
         if path.is_dir() and not path.is_symlink() and path.name != "dir.png":
             path.chmod(0o755)
@@ -133,8 +154,8 @@ def _unprivileged(tmp_path: Path, check) -> None:
             traceback.print_exc()
         finally:
             os._exit(code)
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 0, "check failed as uid 65534"
+    status = _wait_child(pid, _CHILD_WAIT_SECONDS)
+    assert status == 0, "check failed as uid 65534"
 
 
 @pytest.mark.parametrize("bad", BAD)
