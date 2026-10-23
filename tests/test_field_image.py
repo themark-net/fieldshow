@@ -134,20 +134,36 @@ def _pytest_temp_root(tmp_path_factory) -> None:
     _TEMP_ROOT = parent if ours else base
 
 
+def _require_child() -> bool:
+    """A run that must exercise the uid 65534 child fails instead of skipping.
+
+    On by default under root (the image runs), off for other uids.
+    ``FIELDSHOW_REQUIRE_CHILD=1`` or ``=0`` overrides either way.
+    """
+    flag = os.environ.get("FIELDSHOW_REQUIRE_CHILD")
+    if flag is not None:
+        return flag not in ("", "0")
+    return os.geteuid() == 0
+
+
 def _start_guard(changed: list[tuple[Path, int]]) -> tuple[int, int]:
     """Fork a guardian that undoes the widening even if pytest is SIGKILLed.
 
-    It sits in its own session on the read end of a pipe. The pipe closes when
+    It sits in its own session (in place before this returns) on the read end of a pipe. The pipe closes when
     the block ends or when pytest dies, however it dies. Then the guardian
     SIGKILLs the child it was told about (unless told it was reaped) and puts
     back every mode that still has only the search bit added.
     """
     read_fd, write_fd = os.pipe()
+    ready_r, ready_w = os.pipe()
     pid = os.fork()
     if pid == 0:
         try:
             os.close(write_fd)
+            os.close(ready_r)
             os.setsid()
+            os.write(ready_w, b"1")
+            os.close(ready_w)
             devnull = os.open(os.devnull, os.O_RDWR)
             for fd in (0, 1, 2):
                 os.dup2(devnull, fd)
@@ -179,6 +195,11 @@ def _start_guard(changed: list[tuple[Path, int]]) -> tuple[int, int]:
         finally:
             os._exit(0)
     os.close(read_fd)
+    os.close(ready_w)
+    # Return only once the guardian has its own session, so a group kill
+    # right after this cannot take it along with pytest.
+    os.read(ready_r, 1)
+    os.close(ready_r)
     return pid, write_fd
 
 
@@ -195,10 +216,13 @@ def _reachable_by_others(tmp_path: Path, root: Path):
         raise ValueError(f"{tmp_path} is not under the pytest temp root {root}")
     for above in root.parents:
         if not stat.S_IMODE(above.stat().st_mode) & stat.S_IXOTH:
-            pytest.skip(
+            reason = (
                 f"{above} (above the pytest temp root {root}) has no o+x; the uid 65534 "
                 "child cannot reach the test files without widening a dir pytest did not create"
             )
+            if _require_child():
+                pytest.fail(reason + " (FIELDSHOW_REQUIRE_CHILD, or root: fail, do not skip)", pytrace=False)
+            pytest.skip(reason)
     inside = [] if tmp_path == root else [p for p in tmp_path.parents if p == root or root in p.parents]
     changed = [
         (parent, stat.S_IMODE(parent.stat().st_mode))
@@ -357,8 +381,9 @@ def test_reachable_by_others_adds_only_search_and_restores(tmp_path: Path):
                 parent.chmod(snapshot[parent])
 
 
-def test_reach_skips_instead_of_widening_above_the_pytest_root(tmp_path: Path):
+def test_reach_skips_instead_of_widening_above_the_pytest_root(tmp_path: Path, monkeypatch):
     """A dir above the temp root without ``o+x`` is not ours to open: skip, change nothing."""
+    monkeypatch.setenv("FIELDSHOW_REQUIRE_CHILD", "0")
     root = tmp_path / "root"
     leaf = root / "a" / "b"
     leaf.mkdir(parents=True)
@@ -623,6 +648,7 @@ NOT_AN_IMAGE = [
     ("short.png", b"\x89PNG\r\n"),
     ("short.jpg", b"\xff\xd8"),
     ("nope.gif", b"GIF88a-nope"),
+    ("riffless.webp", b"XXXX" + b"\x24\x00\x00\x00" + b"WEBP" + b"no-riff"),
 ]
 
 
@@ -817,7 +843,7 @@ def test_kill_9_of_pytest_mid_child_leaves_no_wider_mode_and_no_child(tmp_path: 
                 f"--basetemp={basetemp}", f"{Path(__file__).resolve()}::test_kill_probe_child_sleeps",
             ],
             cwd=repo_root,
-            env={**os.environ, "FIELDSHOW_KILL_PROBE": "1"},
+            env={**os.environ, "FIELDSHOW_KILL_PROBE": "1", "FIELDSHOW_REQUIRE_CHILD": "0"},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -979,3 +1005,97 @@ def test_guard_kills_an_unreaped_child_and_restores_modes_when_its_pipe_closes(t
             os.kill(sleeper, signal.SIGKILL)
         with contextlib.suppress(ChildProcessError):
             os.waitpid(sleeper, 0)
+
+
+# Round 4: a misdetected temp root must not hide the child (U3), and the
+# guardian and parent-death checks the Reviewer found uncovered.
+
+
+def test_a_default_run_reaches_tmp_path_without_skipping(tmp_path: Path, tmp_path_factory, monkeypatch):
+    """With pytest's own ``pytest-of-<user>`` root, the child path must run, never skip."""
+    base = tmp_path_factory.getbasetemp()
+    if not base.parent.name.startswith("pytest-of-"):
+        pytest.skip(f"--basetemp run ({base}); the default-root case does not apply")
+    monkeypatch.setenv("FIELDSHOW_REQUIRE_CHILD", "1")
+    leaf = tmp_path / "leaf"
+    leaf.mkdir()
+    with _reachable_by_others(leaf, _TEMP_ROOT):
+        assert all(_mode(parent) & 0o001 for parent in leaf.parents)
+
+
+def test_reach_fails_instead_of_skipping_when_the_child_is_required(tmp_path: Path, monkeypatch):
+    """Under root or ``FIELDSHOW_REQUIRE_CHILD=1``, an unreachable tree is a failure, not a quiet skip."""
+    monkeypatch.setenv("FIELDSHOW_REQUIRE_CHILD", "1")
+    root = tmp_path / "root"
+    leaf = root / "a"
+    leaf.mkdir(parents=True)
+    tmp_path.chmod(0o700)
+    before = {path: _mode(path) for path in [leaf, *leaf.parents]}
+    outcome = "block ran"
+    try:
+        with _reachable_by_others(leaf, root):
+            pass
+    except pytest.fail.Exception as exc:
+        outcome = f"failed: {exc}"
+    except pytest.skip.Exception as exc:
+        outcome = f"skipped: {exc}"
+    assert outcome.startswith("failed: ") and "no o+x" in outcome, outcome
+    assert {path: _mode(path) for path in before} == before
+
+
+def test_child_exits_if_its_parent_is_already_gone():
+    """If the parent died before PR_SET_PDEATHSIG was armed, the child must not run on."""
+    pid = os.fork()
+    if pid == 0:
+        try:
+            _die_with_parent(-1)
+        finally:
+            os._exit(7)
+    assert _wait_child(pid, 10) == 1
+
+
+def test_guard_leaves_a_mode_that_someone_else_changed(tmp_path: Path):
+    """The guardian only undoes its own ``o+x``; a mode set by someone else in between stays."""
+    other = tmp_path / "other"
+    other.mkdir()
+    other.chmod(0o700)
+    guard_pid, guard_fd = _start_guard([(other, 0o700)])
+    other.chmod(0o701)
+    other.chmod(0o750)
+    os.close(guard_fd)
+    os.waitpid(guard_pid, 0)
+    assert _mode(other) == 0o750, oct(_mode(other))
+
+
+def test_guard_survives_a_kill_of_pytests_process_group(tmp_path: Path):
+    """``kill -9 -<pgid>`` (a shell job, a service stop) must not take the guardian with pytest."""
+    opened = tmp_path / "opened"
+    opened.mkdir()
+    opened.chmod(0o700)
+    read_fd, write_fd = os.pipe()
+    fake = os.fork()
+    if fake == 0:
+        try:
+            os.close(read_fd)
+            os.setsid()
+            _start_guard([(opened, 0o700)])
+            opened.chmod(0o701)
+            os.write(write_fd, b"1\n")
+            time.sleep(3600)
+        finally:
+            os._exit(0)
+    os.close(write_fd)
+    try:
+        assert _read_pid(read_fd) == 1
+        os.killpg(fake, signal.SIGKILL)
+        os.waitpid(fake, 0)
+        deadline = time.monotonic() + 5
+        while _mode(opened) != 0o700 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert _mode(opened) == 0o700, oct(_mode(opened))
+    finally:
+        os.close(read_fd)
+        with contextlib.suppress(OSError):
+            os.killpg(fake, signal.SIGKILL)
+        with contextlib.suppress(ChildProcessError):
+            os.waitpid(fake, 0)
