@@ -168,3 +168,29 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 `_open_up_dirs` chmods through `stop` and then breaks. `_unprivileged` passes `tmp_path.parent`, the pytest basetemp. `_wait_child` polls `WNOHANG` and, at the deadline, sends `SIGKILL`, reaps, and raises. `_unprivileged` still uses 60s. Full suite: `113 passed, 2 skipped` in 28.01s.
 
 As root, `/tmp/pytest-of-<user>` stays `0o700`, so a dropped uid 65534 may still be unable to walk into the default pytest tree. A basetemp whose parent is already traversable (`/tmp`, or `--basetemp` directly under it) is opened. This session did not run the image pytest as root.
+
+## Item 4 — long filename suffix returns 500
+
+### Symptom
+
+A client filename whose suffix is about 300 characters used to make `POST /api/image` return 500. `NAME_MAX` is 255. The handler built `upload{suffix}` and called `write_bytes` before `import_image` looked at the suffix, so `OSError` `ENAMETOOLONG` was uncaught.
+
+### Where
+
+Originally `src/fieldshow/web/app.py:86-88` (the pre-sniff handler). After the sniff change the handler is `src/fieldshow/web/app.py:110-119`. It never reads the client suffix. The scratch name is `upload` plus the sniffed suffix, so the 500 is gone, and a real PNG with a 300-character suffix is stored as `images/field.png`.
+
+### Hypothesis
+
+The 500 was the write of an over-long client suffix. Ignoring that suffix (item 2) avoids `ENAMETOOLONG` and also skips the rule that a present suffix must be one of `FIELD_IMAGE_SUFFIXES`. With the sniff left in place, removing only an early allowlist check makes the PNG-plus-long-suffix upload succeed. The check has to run before `write_bytes`, and it has to be the allowlist, not a length cap: `evil.exe` with PNG bytes is short and is also not an image suffix.
+
+### Planned surgical fix
+
+In the upload handler, before reading or writing: if `Path(filename).suffix` is non-empty and `suffix.lower()` is not in `FIELD_IMAGE_SUFFIXES`, return 415. Then sniff as now. Extensionless names still depend on the bytes only. `.PNG` and `.JPEG` stay legal.
+
+### Planned test
+
+`TestClient`, show already serving `images/field.png`. Upload `field.` plus 300 `p`s with PNG bytes, and the same name with junk bytes. Both 415, show JSON unchanged, the original PNG still served, `app.state.assets` empty. Also `evil.exe` with PNG bytes is 415 the same way, so a length-only check does not pass. `FIELD.PNG` with PNG bytes is still 200 and `images/field.png`.
+
+### Planned mutant
+
+Delete only the early suffix check. Leave the sniff. The PNG body with the 300-character suffix returns 200 and is stored. The junk body can still be 415 from the sniff; the PNG body is the one that kills this mutant.
