@@ -366,3 +366,7 @@ Verdict: two MUSTs in the root-only test harness, five should-fixes. Production 
   - The child sets `PR_SET_PDEATHSIG` to SIGKILL via `ctypes` `prctl`, after `setuid` (a credential change clears it), and exits if the parent is already gone.
 - Planned tests: the bound skips and changes no mode; a kill -9 simulation runs pytest in a subprocess with `--basetemp` under a home-like tree, SIGKILLs it mid-child, and asserts every mode is back and the child is gone; a planted 0750 "home" above the root makes the probe skip with no mode change.
 - Planned mutants: unbounded walk; no guardian; no `PR_SET_PDEATHSIG`; `_CHILD_WAIT_SECONDS = 10**9`.
+
+### R3 outcome
+
+Fixed as planned. Red-first at `a7d2e06`, the 10-mutant table (10 killed), and the host and in-image counts are in the handoff, section "Round 3". The same round also moved the scratch write inside the `try` (SF1) and pinned empty body 415 (SF2).
