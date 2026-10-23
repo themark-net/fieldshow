@@ -160,3 +160,9 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 
 - `above` was `0o755` (`assert 493 == 448`)
 - `_wait_child blocked past 10s on a child that sleeps for an hour; the suite killed it so this run would finish`
+
+### Fix
+
+`_open_up_dirs` chmods through `stop` and then breaks. `_unprivileged` passes `tmp_path.parent`, the pytest basetemp. `_wait_child` polls `WNOHANG` and, at the deadline, sends `SIGKILL`, reaps, and raises. `_unprivileged` still uses 60s. Full suite: `113 passed, 2 skipped` in 28.01s.
+
+As root, `/tmp/pytest-of-<user>` stays `0o700`, so a dropped uid 65534 may still be unable to walk into the default pytest tree. A basetemp whose parent is already traversable (`/tmp`, or `--basetemp` directly under it) is opened. This session did not run the image pytest as root.

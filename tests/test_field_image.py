@@ -112,23 +112,39 @@ _CHILD_WAIT_SECONDS = 60
 
 
 def _open_up_dirs(tmp_path: Path, stop: Path) -> None:
-    """chmod 0755 from ``tmp_path`` upward, stopping at ``/`` or ``/tmp``.
+    """chmod 0755 from ``tmp_path`` up through ``stop``, and not above it.
 
-    ``stop`` is the scoped root the caller passes (pytest's basetemp). This
-    extraction still ignores it.
+    ``stop`` is pytest's basetemp for this run. ``/`` and ``/tmp`` stay hard
+    stops so a wrong ``stop`` cannot walk out of the temp tree.
     """
-    del stop
     for parent in [tmp_path, *tmp_path.parents]:
         if str(parent) in ("/", "/tmp"):
             break
         parent.chmod(0o755)
+        if parent == stop:
+            break
 
 
 def _wait_child(pid: int, timeout: float) -> int:
-    """Block until ``pid`` exits. ``timeout`` is not applied yet."""
-    del timeout
+    """Wait until ``pid`` exits. After ``timeout`` seconds, SIGKILL it and raise."""
+    deadline = time.monotonic() + timeout
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return os.waitstatus_to_exitcode(status)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.05, remaining))
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     _done, status = os.waitpid(pid, 0)
-    return os.waitstatus_to_exitcode(status)
+    code = os.waitstatus_to_exitcode(status)
+    raise AssertionError(
+        f"child {pid} was still running after {timeout:.0f}s; killed it (exit {code})"
+    )
 
 
 def _unprivileged(tmp_path: Path, check) -> None:
