@@ -191,28 +191,33 @@ def _mode(path: Path) -> int:
     return path.stat().st_mode & 0o777
 
 
-def test_open_up_dirs_stops_at_the_scoped_root(tmp_path: Path):
-    """A directory above the scoped root stays 0700. Dirs inside it are opened."""
+def test_reachable_by_others_adds_only_search_and_restores(tmp_path: Path):
+    """uid 65534 needs ``x`` on every ancestor, ``/tmp/pytest-of-<user>`` included (0700 by default).
+
+    Only ``o+x`` is added, only where it is missing, and every mode is put back.
+    """
     above = tmp_path / "above"
-    scoped = above / "scoped"
-    inner = scoped / "nested" / "inner"
-    inner.mkdir(parents=True)
-    for path in (above, scoped, inner.parent, inner):
-        path.chmod(0o700)
-    saved = []
-    for parent in [inner, *inner.parents]:
-        if str(parent) in ("/", "/tmp"):
-            break
-        saved.append((parent, _mode(parent)))
+    mid = above / "mid"
+    leaf = mid / "leaf"
+    leaf.mkdir(parents=True)
+    above.chmod(0o700)
+    mid.chmod(0o750)
+    ancestors = list(leaf.parents)
+    snapshot = {parent: _mode(parent) for parent in ancestors}
     try:
-        _open_up_dirs(inner, scoped)
-        assert _mode(above) == 0o700, f"{above} is {oct(_mode(above))}"
-        assert _mode(scoped) == 0o755, f"{scoped} is {oct(_mode(scoped))}"
-        assert _mode(inner.parent) == 0o755, f"{inner.parent} is {oct(_mode(inner.parent))}"
-        assert _mode(inner) == 0o755, f"{inner} is {oct(_mode(inner))}"
+        with _reachable_by_others(leaf):
+            missing = [str(parent) for parent in ancestors if not _mode(parent) & 0o001]
+            assert missing == [], f"no o+x on {missing}"
+            assert _mode(above) == 0o701, oct(_mode(above))
+            assert _mode(mid) == 0o751, oct(_mode(mid))
+            for parent in ancestors:
+                assert _mode(parent) & ~0o001 == snapshot[parent] & ~0o001, parent
+        after = {parent: _mode(parent) for parent in ancestors}
+        assert after == snapshot
     finally:
-        for parent, mode in reversed(saved):
-            parent.chmod(mode)
+        for parent in reversed(ancestors):
+            if _mode(parent) != snapshot[parent]:
+                parent.chmod(snapshot[parent])
 
 
 def test_wait_child_kills_a_hung_child_within_the_timeout():
@@ -407,6 +412,23 @@ def test_non_image_upload_is_415_and_leaves_the_show(tmp_path: Path):
     assert response.status_code == 415
     assert client.get("/api/show").json() == before
     assert client.get("/api/field-image").content == PNG
+    assert list(client.app.state.assets.rglob("upload*")) == []
+
+
+def test_scratch_is_removed_when_import_fails_after_the_write(tmp_path: Path, monkeypatch):
+    """The scratch file exists once the body is written. Any later failure must still remove it."""
+    import fieldshow.web.app as web_app
+
+    def refuse(*_args, **_kwargs):
+        raise ValueError("field image must be png, jpg, webp, or gif")
+
+    monkeypatch.setattr(web_app, "import_image", refuse)
+    path, _ = _show_dir(tmp_path, "images/field.png")
+    client = _client(path)
+    before = client.get("/api/show").json()
+    response = client.post("/api/image", files={"image": ("field.png", PNG + b"-late", "image/png")})
+    assert response.status_code == 415, response.text
+    assert client.get("/api/show").json() == before
     assert list(client.app.state.assets.rglob("upload*")) == []
 
 
