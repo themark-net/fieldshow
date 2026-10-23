@@ -413,6 +413,7 @@ SNIFFED = [
     ("anim89.png", GIF89, "images/field.gif"),
     ("still.png", WEBP, "images/field.webp"),
     ("pic.gif", PNG + b"-as-gif", "images/field.png"),
+    ("FIELD.PNG", PNG + b"-case", "images/field.png"),
 ]
 
 NOT_AN_IMAGE = [
@@ -451,6 +452,28 @@ def test_upload_stores_the_sniffed_type(tmp_path: Path, filename: str, body: byt
 
 @pytest.mark.parametrize("filename,body", NOT_AN_IMAGE)
 def test_upload_rejects_bytes_that_are_not_an_image(tmp_path: Path, filename: str, body: bytes):
+    path, _ = _show_dir(tmp_path, "images/field.png")
+    client = _client(path)
+    before = client.get("/api/show").json()
+    response = _post_image(client, filename, body)
+    assert response.status_code == 415, response.text
+    assert client.get("/api/show").json() == before
+    assert client.get("/api/field-image").content == PNG
+    assert list(client.app.state.assets.rglob("*")) == []
+
+
+# 300 > NAME_MAX (255). A length cap is not the rule: evil.exe is short and still not an image suffix.
+BAD_SUFFIX = [
+    ("field." + "p" * 300, PNG + b"-long"),
+    ("field." + "p" * 300, b"not-an-image"),
+    ("evil.exe", PNG + b"-exe"),
+]
+
+
+@pytest.mark.parametrize("filename,body", BAD_SUFFIX)
+def test_disallowed_suffix_is_415_before_anything_is_written(
+    tmp_path: Path, filename: str, body: bytes
+):
     path, _ = _show_dir(tmp_path, "images/field.png")
     client = _client(path)
     before = client.get("/api/show").json()

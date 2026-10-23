@@ -194,3 +194,20 @@ In the upload handler, before reading or writing: if `Path(filename).suffix` is 
 ### Planned mutant
 
 Delete only the early suffix check. Leave the sniff. The PNG body with the 300-character suffix returns 200 and is stored. The junk body can still be 415 from the sniff; the PNG body is the one that kills this mutant.
+
+### Red-first evidence
+
+Sniff is in place. No client-suffix check yet.
+
+```
+PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_field_image.py::test_disallowed_suffix_is_415_before_anything_is_written \
+  tests/test_field_image.py::test_upload_stores_the_sniffed_type
+```
+
+`2 failed, 9 passed`.
+
+- `field.` + 300 `p`s with PNG bytes returned 200 and `images/field.png`
+- the same name with junk bytes passed (sniff already returns 415)
+- `evil.exe` with PNG bytes returned 200 and `images/field.png`
+- `FIELD.PNG` and the other sniffed uploads passed
