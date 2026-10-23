@@ -54,6 +54,7 @@ No production edit. The `finally` unlink was already correct. The assertions are
 | --- | --- | --- | --- | --- |
 | 1 | Delete the `finally` unlink | `test_upload_is_stored_as_a_marker_and_served` (left `upload.png`), `test_non_image_upload_is_415_and_leaves_the_show` (left `upload.exe`) | `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` | same |
 | 1 | Unlink only in `else` (success path) | `test_non_image_upload_is_415_and_leaves_the_show` left `upload.exe`. The success test stayed green | `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` | same |
+| 2 | Handler uses `Path(filename).suffix or ".png"` again and does not sniff | `test_upload_rejects_bytes_that_are_not_an_image` (`notes`, `fake.png` returned 200) and `test_upload_stores_the_sniffed_type` (`photo.png` stored `images/field.png`). 12 failed, 1 passed | `9d004ff0be46b014d8a37999c38848fadbb796153b19eeaf741640065a8330a7` | same |
 
 ## Item 2 — extensionless upload and magic bytes
 
