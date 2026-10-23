@@ -1,216 +1,66 @@
-# Pending handoff, 2026-10-22
-
-#4 code slice is on `build/4-code-slice` (pushed, no PR), from `origin/main` `645a388`. Upload scratch files are asserted gone, `/api/image` sniffs magic bytes and rejects a bad client suffix before writing, `_unprivileged` gives ancestors only `o+x` for the child and restores them, never waits forever, and cleans the child's temp dirs, and `create_app` removes its `fieldshow-*` temp dir. Host x3: `120 passed, 3 skipped`, `/tmp/fieldshow-*` stable. In-image as root: `121 passed, 2 skipped` (was 56 failed at `44d295e`). 11/11 mutants killed. The field image is still not drawn. See [ops/HANDOFF-4-code-slice-2026-10-23.md](ops/HANDOFF-4-code-slice-2026-10-23.md).
-
-T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; fast-forwarded to main at `a803da2`). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
-
-#3 (field_image path restriction) passed Tester and Reviewer at `e786df3` and was fast-forwarded to main there (branch `build/3-field-image`). See [ops/HANDOFF-3-field-image-2026-10-22.md](ops/HANDOFF-3-field-image-2026-10-22.md).
-
-## What shipped
-
-`fieldshow build` arranges, charts, and writes one LilyPond PDF per section next to the show JSON (`parts/trumpet.pdf` and the other names in `SECTION_ORDER`). The show records `part_pdfs` (relative path or null) and `engrave_error`. The page links `GET /api/part-pdf/{section}` when a file exists and marks the part unavailable, with the reason, when it does not. The route returns 404 for a missing part. The server does not run LilyPond.
-
-A missing engraver prints `PDF parts unavailable: LilyPond not found (set FIELDSHOW_ENGRAVER)` on stderr, stores null paths, and exits 0. A non-zero `lilypond` or `musicxml2ly` exit does the same for that part. Set `FIELDSHOW_ENGRAVER` or `FIELDSHOW_LILYPOND` to the `lilypond` binary, and `FIELDSHOW_MUSICXML2LY` to the converter. Otherwise both come from `PATH`.
-
-Parts are inserted at offset 0 in the MusicXML. The evaluation export had used `Score.append`, which laid the parts end to end and padded twenty hidden measures. The build does not engrave those.
-
-## How to run
-
-Host, without LilyPond. The two engraving tests skip. The failure tests run.
-
-```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest
-fieldshow build examples/fanfare.json -o /tmp/show.json
-```
-
-Image. This is the command the skip message prints. It ran green here: 18 passed.
-
-```bash
-docker build -t fieldshow:t0005 .
-docker run --rm -v "$PWD:/work" -w /work -e HOME=/tmp --user "$(id -u):$(id -g)" fieldshow:t0005 \
-  sh -c 'python -m venv /tmp/v --system-site-packages && . /tmp/v/bin/activate && pip install -q --no-cache-dir -e ".[dev]" && pytest'
-```
-
-`fieldshow:t0005` is 227MB on disk, 200MB content (`docker images` on nimo, image `8eed5de8eaa1`, Round 3). Earlier notes said 278MB; that was a different measurement and is wrong for this image. `python:3.12-slim` is 51MB. LilyPond 2.24.4 plus the libraries apt pulls in for it (Guile, Ghostscript, URW fonts, Cairo, Pango) are about 110MB installed. The eval image that contained both MuseScore and LilyPond was 589MB and is not what we deploy.
-
-## Decision
-
-OQ-0001 is closed. LilyPond engraves the parts. See `docs/adr/0004-lilypond-part-pdfs.md` and `docs/ops/AUTONOMOUS-DECISIONS-2026-10-22.md`.
-
-On Gate Fanfare, musicxml2ly kept every pitch, rhythm, clef, part name, key, time signature, and the 132 tempo. The source has no dynamics, articulations, or transposition label, and neither engraver invented any. MuseScore 3.2.3 was faster (about 0.12s versus 1.3s for one part) but dropped the staff name on a one-line part and stacked all eleven tempo marks on the flute of the full score.
-
-## Parked
-
-- OQ-0002 field photo tracing
-- OQ-0003 pit, guard, and props
-- OQ-0004 step-size and collision warnings
-- OQ-0005 no login on the LAN page. Unchanged. No new port.
-- Battery parts (snare, bass drum) are engraved on a pitched treble staff with the key signature, because the arranger stores them as pitch tokens. A percussion clef / one-line staff is a follow-up (OQ-0003 territory).
-- MuseScore stays out of the image. If a later chart shows a musicxml2ly octave or rhythm loss, re-run the ADR 0004 comparison.
-
-## Verification
-
-Host: 16 passed, 2 skipped (engraving tests skip without LilyPond). Image `fieldshow:t0005`: 18 passed.
-
-Mutation proof (one at a time, restored after each):
-
-| Mutation | Result |
-| --- | --- |
-| Engrave loop only does `SECTION_ORDER[:1]` | red: `test_build_writes_one_real_pdf_per_part`, `test_page_links_each_part_pdf` |
-| PDF written as empty bytes | red: same two tests |
-| Missing-engraver guard removed (`if False:`) | red: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-| Missing engraver raises instead of recovering | red: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-
-## CI
-
-The repo has no `.github/workflows/`, so no CI runs on any push (`build/**` or `main`). Nothing was added; the tests above are the gate.
-
-The container still serves the sample intent until a built show is mounted. Paper links stay unavailable until `fieldshow build` has written `parts/` beside that file. An intent edit that changes the music clears the links until the next build.
-
-## Deploy
-
-Sysadmin redeploys on host `maximum` per `docs/ops/deploy-maximum.md`. Its Update section reads the running SHA from `~/fieldshow-data/DEPLOYED_SHA`, tags the running image `fieldshow:pre-<old>-to-<new>`, backs up `show.json` and `parts/` as `show.json.pre-<old>-to-<new>` and `parts.pre-<old>-to-<new>` (both steps skipped if they already exist, so a rerun keeps the rollback point), then the rsync of a clean `git archive` export, then `docker compose build`, `fieldshow build` and `up -d --no-build --force-recreate fieldshow`, and records the new SHA. The current rollback target is `fieldshow:pre-a803da2-to-e786df3` with `show.json.pre-e786df3`. The engraver is in the image (`Dockerfile` installs `lilypond`). Expect the image to grow by the LilyPond stack described above. Do not rely on a host install of LilyPond. `QT_QPA_PLATFORM` is not required. LilyPond is not a Qt program. PDFs are produced by `fieldshow build`, not by the server: to serve linked parts on maximum, run the build (inside the image is fine) and bind-mount the directory holding `show.json` and its `parts/` (e.g. at `/data`, `FIELDSHOW_SHOW=/data/show.json`). Mounting only the JSON file leaves the parts marked unavailable.
-
-## Round 2
-
-Tester and Reviewer both FAILed `3c9fca0`: the parts engraved, and the tests did not lock the behavior. Pushed to `build/t0005-part-pdfs` with a normal push. No PR, no merge. No CI workflow was added.
-
-### What changed
-
-- **B1.** The engraved-build test runs `pdftotext` on each `parts/<section>.pdf`. The text must contain that section's `PART_NAMES` value and must not contain another part's name unless one name is a substring of the other. Flute text differs from tuba text, trumpet from snare, and the eleven PDF bodies are not identical. `GET /api/part-pdf/{section}` returns the bytes of `parts/<section>.pdf`. The image installs `poppler-utils` for `pdftotext`.
-- **B2 / RB1.** `tests/test_part_pdfs.py::test_export_parts_start_at_offset_zero` exports the arranged Gate Fanfare with no engraver. Eleven parts, two `<measure>` elements each, first note at offset 0, and no `print-object="no"`. That is the `repro_offset.py` failure on main (`Score.append`). `export_midi` uses the same score, so MIDI parts start together too (`docs/ARCHITECTURE.md`).
-- **B3.** The fake `lilypond` writes a `%PDF` at the `-o` prefix plus `.pdf`, then exits 4. The build still exits 0, stderr contains `lilypond exited 4`, `part_pdfs` is null, and `parts/` has no PDF.
-- **S1.** Each failed part stores a short `part_errors[section]` (`lilypond exited 4`, `timed out`). The page row is only that reason. The stderr tail stays on stderr and in `engrave_error`, and it is not in the HTML (`/tmp/` and `fieldshow-engrave-` are absent; each paper `<li>` is under 200 characters). A missing engraver is one banner line plus `unavailable` on each row, not `unavailable: PDF parts unavailable`.
-- **S2.** `engrave_parts` deletes every existing `parts/<section>.pdf` before engraving, including the missing-engraver return. A pre-seeded `%PDF` is gone after a missing-engraver build and after a failing engraver, and `create_app` on that JSON returns 404. The old per-part `dest.unlink()` in the except branch was dead (the PDF is copied only after success) and is removed. The live mutant is "stale clear removed".
-- **S3 / RB2.** The route serves only `<show_dir>/parts/<section>.pdf` for a section in `SECTION_ORDER`, and only when `part_pdfs[section]` is exactly that relative marker. The path is computed, resolved, and must be `is_relative_to` the resolved `parts/` directory and a real file. `ValueError` and `OSError` are 404. Covered, all 404 and never the foreign bytes: `../show.json`, `%2e%2e%2fshow.json`, a symlink out of `parts/`, JSON values `show.json`, `../x`, `/etc/passwd`, `notes.txt`, and a NUL, including when a real part PDF is also on disk. A planted `parts/not-a-part.pdf` is 404. A good marker still returns that file.
-- **Q9.** `POST /api/intent` with `tempo` clears the links and the route is 404. A design-only intent keeps the links.
-- **Timeout.** Both engraver subprocesses use `start_new_session=True` and `Popen.communicate(timeout=...)`. On `TimeoutExpired`, `os.killpg(pid, SIGKILL)` kills the grandchild. `FIELDSHOW_ENGRAVE_TIMEOUT` is seconds, default 120. The fake `lilypond` backgrounds `sleep 300`, records the pid, and sleeps. With the timeout at 2s the build exits 0, the short reason is `timed out`, and each child pid is gone (`ProcessLookupError` or a reaped zombie).
-- **Evidence.** `docs/adr/0004-evidence/` holds the eval Dockerfile, `render.sh`, the out2 commands, the small input MusicXML, pdfinfo and pdftotext logs, and `contact-sheet.png` (MuseScore vs LilyPond, trumpet and simultaneous full score, MuseScore page 2). About 384 KB. ADR 0004 links it and records that the MuseScore lean was the CEO's daily product touch (the ticket brief), and that these pages overrode it.
-- **Deploy.** `docs/ops/deploy-maximum.md` mounts the whole show directory through a `compose.override.yaml` on maximum (`/home/mark/fieldshow-data:/data`, `FIELDSHOW_SHOW=/data/show.json`), builds with `docker compose run --rm --user ... fieldshow fieldshow build /data/intent.json -o /data/show.json`, and checks `/api/part-pdf/trumpet` for `200 application/pdf`. The rsync now excludes `tmp/` (worktrees) and the override. That compose run flow was smoke-tested on nimo with a throwaway project (no ports published): 11 PDFs.
-- **AGENTS.md** names `musicxml2ly` and `FIELDSHOW_MUSICXML2LY`.
-
-### Verification
-
-Final run at `0585cf6`. The commit after it changes only this file, so `src/`, `tests/` and `Dockerfile` are identical at the pushed tip.
-
-Host `.venv` (engraving tests skip): `22 passed, 2 skipped, 1 warning in 24.27s`.
-
-Docker build `docker build -t fieldshow:t0005 .`, exit 0:
-
-```
-#13 naming to docker.io/library/fieldshow:t0005 done
-#13 unpacking to docker.io/library/fieldshow:t0005 1.5s done
-#13 DONE 7.1s
-```
-
-Image `a713319b9a54`, 227 MB. In-image pytest, worktree mounted read-only, `--user "$(id -u):$(id -g)"`, `PYTHONPATH=/work/src`, pytest and httpx from a throwaway venv under `/tmp`:
-
-```
-24 passed, 1 warning in 39.49s
-```
-
-The warning is the existing Starlette note about httpx. No root-owned files were left in the worktree.
-
-Spot mutants, each in a scratch copy run in the image at `0585cf6` (clean copy `24 passed`):
-
-- Route serves `flute.pdf` for every section: `2 failed` (`test_page_links_each_part_pdf`, `test_part_pdf_route_rejects_null_tamper_and_escape`: `b'%flute-real' == b'%baritone-good'`).
-- `SECTION_ORDER` check and `is_relative_to(parts/)` removed: `1 failed` (`test_part_pdf_route_rejects_null_tamper_and_escape`, line 365).
-- `os.killpg` replaced by `proc.kill()`: `1 failed` (`test_engrave_timeout_kills_grandchild`: "build hung; the engraver timeout did not stop the part").
-
-### Mutants
-
-`tmp/mutants/run_r2.py` (not committed; `tmp/` is gitignored) applied each patch in a fresh tree and ran pytest in `fieldshow:t0005` as the host uid. The table has 25 rows. Counting every alias name it is 35 mutants, which is what the runner printed; D3 = M7 and Q3 = M11 are the same patch, so there are 23 distinct patches: 21 CAUGHT, 1 EQUIVALENT (M3), 1 NOT OBSERVABLE (M6), 0 survived (re-run by DevBot at `2ca2278`). Aliases that share a patch share the failing tests. M3 is EQUIVALENT (the stored string is not opened). M6 is not observable through the app rather than strictly equivalent: the removed unlink also covered `dest.write_bytes()` failing partway (for example ENOSPC), which can leave a truncated `parts/<s>.pdf` until the next build, but the marker is null so the route still 404s. The live containment check is `is_relative_to(parts/)`. The live stale-file check is `_clear_part_pdfs`, caught as Q6 / R-stale.
-
-| Mutant | Result | Failing tests |
-| --- | --- | --- |
-| D1 engrave loop `SECTION_ORDER[:1]` | CAUGHT | `test_build_writes_one_real_pdf_per_part`, `test_page_links_each_part_pdf`, `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_failed_engrave_page_shows_only_the_short_reason`, `test_engrave_timeout_kills_grandchild`, `test_engraver_path_with_a_space_still_writes_pdfs` |
-| D2 PDF written as empty bytes | CAUGHT | `test_build_writes_one_real_pdf_per_part`, `test_page_links_each_part_pdf`, `test_engraver_path_with_a_space_still_writes_pdfs` |
-| D3 missing-engraver guard removed (`if False`) | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-| D4 missing engraver raises | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-| Q1 set-but-missing engraver falls through to `PATH` | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-| Q2 route serves flute for every section | CAUGHT | `test_page_links_each_part_pdf`, `test_part_pdf_route_rejects_null_tamper_and_escape` |
-| Q3 content-type `application/octet-stream` | CAUGHT | `test_page_links_each_part_pdf`, `test_part_pdf_route_rejects_null_tamper_and_escape` |
-| Q4 / M5 / R-M5 `Score.append` | CAUGHT | `test_export_parts_start_at_offset_zero` |
-| Q5 / M8 ignore lilypond return code | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_failed_engrave_page_shows_only_the_short_reason` |
-| Q6 / R-stale stale-PDF clearing removed | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-| Q7 every part engraves flute's notes | CAUGHT | `test_build_writes_one_real_pdf_per_part` |
-| Q8 / M4 ignore JSON null and serve a file on disk | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape`, `test_music_intent_hides_pdfs_and_design_intent_keeps_them` |
-| Q9 / M10 / R-M10 intent does not clear `part_pdfs` | CAUGHT | `test_music_intent_hides_pdfs_and_design_intent_keeps_them` |
-| Q10 page links every part when unavailable | CAUGHT | `test_missing_engraver_builds_and_page_marks_parts_unavailable`, `test_failed_engrave_page_shows_only_the_short_reason`, `test_engrave_timeout_kills_grandchild`, `test_music_intent_hides_pdfs_and_design_intent_keeps_them` |
-| Q11 per-part failure does not set `engrave_error` | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_engrave_timeout_kills_grandchild` |
-| Q12 failure still records `part_pdfs` | CAUGHT | `test_lilypond_exit_status_discards_the_pdf_it_wrote`, `test_failed_engrave_page_shows_only_the_short_reason`, `test_engrave_timeout_kills_grandchild` |
-| Q13 part name dropped | CAUGHT | `test_build_writes_one_real_pdf_per_part`, `test_musicxml_and_midi_round_trip` |
-| M1 / R-M1 drop timeout and `killpg` | CAUGHT | `test_engrave_timeout_kills_grandchild` |
-| M2 / R-M2 `" ".join(argv)` and `shell=True` | CAUGHT | `test_engraver_path_with_a_space_still_writes_pdfs` |
-| M3 remove only the old `..` / absolute scan | EQUIVALENT | Stored `part_pdfs` strings are not opened. The file name is `parts/<section>.pdf`. Containment is `resolve` plus `is_relative_to(parts/)`, caught by M3b. |
-| M3b / R-M3b remove `is_relative_to(parts/)` | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape` |
-| M6 skip `dest.unlink()` | NOT OBSERVABLE | That unlink is gone. Stale files are cleared up front; removing that call is Q6 / R-stale. |
-| M7 missing-engraver guard `if False` | CAUGHT | same as D3: `test_missing_engraver_builds_and_page_marks_parts_unavailable` |
-| M9 drop `section not in SECTION_ORDER` | CAUGHT | `test_part_pdf_route_rejects_null_tamper_and_escape` |
-| M11 `application/octet-stream` | CAUGHT | same as Q3 |
-
-### Parked
-
-- `HEAD` on `/api/part-pdf/{section}` stays 405. Not changed.
-- Arranger range and transposition, filed separately by PM: transposed parts carry the concert key signature, tenor sax is in bass clef at the wrong octave, alto sax A3 is below range, mellophone reaches F6, battery is on a pitched staff.
-- No CI workflow. PM follow-up. Nothing under `.github/` was added.
-- `field_image` can still be an arbitrary file read through `apply_intent` and `GET /api/field-image`. Pre-existing. PM files it separately. Not touched here.
-
-## Round 3
-
-Tester PASSed `ef48820`. Reviewer FAILed it (`verdict-ef488208.md`). Small respin done directly, no Grok run. Pushed with a normal push. No PR, no merge, no CI workflow.
-
-### What changed
-
-- **B1, route guards pinned.** `test_part_pdf_route_404s_when_the_file_is_missing_or_looping`: marker `parts/trumpet.pdf` with no file (the "mounted only the JSON" deploy) and a symlink loop `parts/tuba.pdf -> tuba.pdf` both 404, and a good baritone still serves its bytes. `test_part_pdf_route_404s_when_parts_dir_is_unreadable`: `parts/` at mode 0 is 404 (skipped as root). The image run found that Python 3.12 `Path.resolve()` raises `RuntimeError` on a loop (3.13+ raise `OSError`), so the tip returned 500 there; `_part_pdf_file` now also catches `RuntimeError`.
-- **B2, `parts/` must stay inside the show dir.** `_part_pdf_file` also requires `parts_dir.is_relative_to(Path(show_dir).resolve())`. `test_part_pdf_route_404s_when_parts_dir_points_outside_the_show`: `show/parts` symlinked to `elsewhere/` is 404 and never serves `ELSEWHERE-OUTSIDE-SHOWDIR`.
-- **S1.** `docs/ops/deploy-maximum.md` rebuild step ends with `docker compose up -d --force-recreate fieldshow` and says why (`serve` reads the JSON once). The rsync excludes are anchored (`/tmp`, `/compose.override.yaml`).
-- **S2.** `FIELDSHOW_ENGRAVE_TIMEOUT` is parsed at the top of `engrave_parts`, before `_clear_part_pdfs`, and passed down to `_run`. Not a positive finite number is a `ValueError`; the CLI prints one line and exits 2. `test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs`: with `abc`, exit 2, the message, no traceback, the old 11 PDFs byte-identical, and the old `show.json` untouched.
-- **Tester SF1.** `test_each_part_export_carries_its_own_pitches`: each one-staff export (the MusicXML LilyPond engraves) has that section's part name and exactly that section's MIDI pitches from the arranged show. Flute and tuba differ, so a "flute notes under every name" mutant cannot pass.
-- **Tester SF2 (optional, done).** `test_musicxml2ly_exit_status_fails_the_part`: the converter writes its `.ly` and exits 3, LilyPond would succeed; every part is null, `part_errors` says `musicxml2ly exited 3`, no PDF on disk.
-- **Handoff fixes.** Image size above is the real one. Mutant table count recounted (25 rows, 35 names with aliases, 23 distinct patches). M6 relabelled "not observable" per the Reviewer nit.
-
-### Verification
-
-Run at `2628bb4`. The commit after it changes only this file.
-
-Host `.venv` (Python 3.14, engraving tests skip): `28 passed, 2 skipped, 1 warning in 24.98s`.
-
-Docker build `docker build -t fieldshow:t0005 .`, exit 0:
-
-```
-#13 naming to docker.io/library/fieldshow:t0005 done
-#13 unpacking to docker.io/library/fieldshow:t0005 1.4s done
-#13 DONE 7.3s
-```
-
-Image `8eed5de8eaa1`, 227MB disk, 200MB content. In-image pytest (Python 3.12), worktree read-only, `--user "$(id -u):$(id -g)"`, `PYTHONPATH=/work/src`, pytest and httpx from a throwaway venv under `/tmp`:
-
-```
-30 passed, 1 warning in 40.25s
-```
-
-No root-owned files left in the worktree.
-
-### Round 3 mutants
-
-`tmp/mutants/run_r3.sh` (gitignored): each patch in a scratch copy, pytest in `fieldshow:t0005` as the host uid. Clean copy: `30 passed`. 7 mutants, 7 CAUGHT.
-
-| Mutant | Result | Failing tests and red line |
-| --- | --- | --- |
-| G3 drop `or not path.is_file()` | CAUGHT | `test_part_pdf_route_404s_when_the_file_is_missing_or_looping` (`:542 assert 500 == 404`), `test_part_pdf_route_404s_when_parts_dir_is_unreadable` (`:558 assert 500 == 404`) |
-| G5 drop `ValueError, OSError` from the except | CAUGHT | `test_part_pdf_route_404s_when_parts_dir_is_unreadable` (`:558 assert 500 == 404`) |
-| G5b drop `RuntimeError` from the except | CAUGHT | `test_part_pdf_route_404s_when_the_file_is_missing_or_looping` (`:543 assert 500 == 404`) |
-| B2 drop `parts_dir.is_relative_to(show_root)` | CAUGHT | `test_part_pdf_route_404s_when_parts_dir_points_outside_the_show` (`:570 assert 200 == 404`) |
-| S2 parse the timeout after `_clear_part_pdfs` | CAUGHT | `test_bad_engrave_timeout_fails_the_build_and_keeps_old_pdfs` |
-| SF1 `io.py` every part uses `parts.get("flute")` | CAUGHT | `test_each_part_export_carries_its_own_pitches` (`:610 AssertionError: clarinet`), `test_music.py::test_musicxml_and_midi_round_trip` (`:60 assert 70 == 72`) |
-| SF2 drop `converted.returncode != 0` | CAUGHT | `test_musicxml2ly_exit_status_fails_the_part` (`:630 'musicxml2ly exited 3' in ''`) |
-
-### Parked (Round 3)
-
-- Tester SF4, a separate poppler test stage in the Dockerfile: parked. poppler-utils stays in the runtime image for the in-image test run.
-- Reviewer nit, evidence logs written by a slightly different script than the README command: not changed.
-- Still parked from Round 2: HEAD 405, arranger range and transposition, `field_image` read, no CI workflow.
-
+# Pending handoff
+
+## Parked 2026-10-23 (fieldshow #4 code slice, round 5 in progress)
+
+Mark took fieldshow off the active projects list on 2026-10-23 (PDT). Work stopped mid round 5.
+
+- **Branch:** `build/4-code-slice`, worktree `tmp/4-code-slice`. Nothing was merged to main and no PR exists.
+- **Last gated pin:** `89337fd`. Reviewer and Tester both FAILed it.
+- **Commits after it:** `e34ab59` (r5 tests) and `794702b` (WIP src fix), plus this docs commit. None of these have been gated.
+
+### Done in round 5 (after `89337fd`)
+
+- **`e34ab59`, test.** Red-first tests:
+  - a dir planted at the freed `fieldshow-*` name between two lifespans (foreign dir, and `images` symlinked to a victim);
+  - the upload refusing a symlinked `images/`;
+  - SIGTERM the moment the dir appears during startup, 10 runs.
+  
+  The old name-reuse assertion is gone. `_start_guard` now checks that the guardian's ready message is its own session id, so the ready byte provably comes after `setsid` (Reviewer G2). There is also a test that `_require_child()` is true under root with no env var set (Reviewer R2).
+  
+  At `89337fd` src, 4 of these failed on the host:
+  - both planted-dir cases;
+  - the images-link case;
+  - SIGTERM during startup, which leaked 10 of 10 runs (rc -15).
+- **`794702b`, WIP fix in `src/fieldshow/web/app.py`.** `_AssetsDir` makes the dir with `mkdtemp` in lifespan startup, or on first upload when there is no lifespan. It remembers st_dev/st_ino, and uses or `rmtree`s the dir only while `lstat` shows that same real dir, owned by the euid, mode 0700. Otherwise it makes a fresh dir and never touches the foreign one. `create_app` no longer makes a dir. The upload returns 500 for a symlinked or non-dir `images/`. The field-image read path uses only a verified dir.
+  - Host suite with this change: 143 passed, 5 skipped. That was one run; the x3 runs were not done.
+  - Reviewer's `relife.py` probe, in-image with a 1777 shared dir and a uid 65534 planter:
+    - **At `89337fd`, server root:** the planted 0777 dir was used, `field.png` was written into the root-owned victim, and `theirs.txt` was deleted.
+    - **At `89337fd`, server uid 1000:** the planted dir was used, and the upload failed with EACCES writing through the link.
+    - **With `794702b`, server root and server uid 1000:** a fresh 0700 dir owned by the server uid was used, the victim stayed empty, and the planted dir and `theirs.txt` survived.
+    - **Script change:** with `794702b`, Reviewer's script as written reads `app.state.assets` before any lifespan, gets `None`, and so plants at `None`. I used a copy that reads the path inside the first lifespan. Both copies are at `/tmp/fs4r5/` on nimo.
+
+### Open blockers (from the `89337fd` verdicts)
+
+1. **Reviewer M1-r4: lifespan dir takeover.** `app.py` used `mkdir(exist_ok=True)` at the freed name, so a second lifespan took over a foreign dir. Fixed in WIP `794702b` with tests in `e34ab59`. Not yet re-gated:
+   - no x3 host runs;
+   - no in-image runs;
+   - no mutants (including new ones for the dev/ino check and for the images-symlink refusal).
+2. **Tester BL1: orphaned serve Popen** in `tests/test_web.py`, `test_stopped_server_leaves_no_assets_dir` (lines 118-143 at `89337fd`). The startup test added in `e34ab59` uses the same bare Popen. If pytest is SIGKILLed or SIGTERMed mid-test, the server keeps listening and keeps its dir. **Not started.**
+   - Planned fix: start the server with a `preexec_fn` that sets `PR_SET_PDEATHSIG` (SIGTERM, so it shuts down gracefully and removes its dir) and then checks `getppid()`.
+   - Planned test: a kill probe that SIGKILLs and SIGTERMs a forked pytest-like parent, then asserts the server is gone and the port is closed.
+
+### SIGTERM during startup (Reviewer SF-1)
+
+At `89337fd`, the dir was made in `create_app` before uvicorn installed its signal handlers, so a SIGTERM in that window killed the process and leaked the dir. Reviewer measured 7 of 24 runs at 0.41-0.46s; the r5 test measured 10 of 10 when the signal is sent the moment the dir appears. `794702b` moves the dir into lifespan startup, which runs under uvicorn's handlers; the r5 test passes 10 of 10 with it. It has not been gated.
+
+### Other open items
+
+- **SIGHUP and SIGQUIT** still leak the dir (Tester SF1). Not handled. One option is to map them to SIGTERM in `cmd_serve` before `uvicorn.run`.
+- **Tester should-fixes, not started:**
+  - resolve the assets path at create time (a TMPDIR symlink retargeted mid-run; the dev/ino check in `794702b` already refuses the `rmtree` of a decoy, but the path is not resolved);
+  - clean up the dir on the health-timeout failure path of the serve test;
+  - the `_free_port` bind/close race (planned: `--port 0` and read the port from uvicorn's log, which reports it);
+  - a comment on the ready-after-setsid ordering. Partly done: `_start_guard` now carries a comment and a runtime check.
+- **Pre-existing `/tmp/fieldshow-*` on nimo:** 1248 dirs, left in place on purpose. Cleanup item, nothing deleted.
+- **"Field image not drawn":** not filed. It needs its own issue; nothing was filed for it.
+- **Local Docker image `fieldshow:4-code-slice`** (`874890554472`) on nimo: built locally, not pushed, not removed.
+- **Unchanged residuals:**
+  - CLI `import-image` still trusts the suffix;
+  - `nosniff` and the size cap are tracked in #5;
+  - SIGKILL of the server leaves its dir;
+  - SIGTERM exits 143 (uvicorn re-raises the signal);
+  - a SIGKILL aimed at the guardian itself;
+  - the GC test depends on FastAPI's private cache names.
+- **Scratch on nimo:** `/tmp/fs4r4/`, `/tmp/fs4r5/` (probes, mutant scripts). Nothing removed.
+
+To resume: do Tester BL1 and the should-fixes on top of `794702b`. Then re-run red-first (one method), the host suite x3, in-image root and uid 1000 with `-e FIELDSHOW_REQUIRE_CHILD=1`, all mutants old and new, and the `relife` probe. Then re-gate with Reviewer and Tester.

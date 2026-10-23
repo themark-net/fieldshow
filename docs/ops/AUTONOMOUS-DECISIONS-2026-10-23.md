@@ -38,3 +38,4 @@ The session picked a reversible default, wrote it down, and kept going. Issue th
 | r4: getppid, mode-check and setsid mutants get tests, not residuals | Document them | Each test is a few lines and runs in about a second on the host. |
 | r4: the 1248 old `/tmp/fieldshow-*` dirs on nimo are left, listed as a cleanup item | Delete them | PM asked to leave them. |
 | r4: CLI `import-image` suffix trust, `nosniff` and size cap (#5), "field image not drawn" stay residuals | Fix here | Out of scope for this round. |
+| r5 (parked 2026-10-23): stop mid round 5; WIP commit 794702b for the M1-r4 fix, Tester BL1 not started | Finish round 5 | Mark took fieldshow off the active list; state recorded in docs/PENDING-HANDOFF.md. |
