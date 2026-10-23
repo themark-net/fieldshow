@@ -58,6 +58,7 @@ No production edit. The `finally` unlink was already correct. The assertions are
 | 3 | `_open_up_dirs` ignores `stop` and walks to `/` or `/tmp` | `test_open_up_dirs_stops_at_the_scoped_root`: `above` is `0o755` | `ac1e4b36021ef2af04c08b580eac19d0b529da3decbca207f2fc0e35d91ebb6b` | same |
 | 3 | `_wait_child` is `os.waitpid(pid, 0)` again | `test_wait_child_kills_a_hung_child_within_the_timeout` failed at the 10s join | `ac1e4b36021ef2af04c08b580eac19d0b529da3decbca207f2fc0e35d91ebb6b` | same |
 | 4 | Early client-suffix check removed, sniff left in place | `test_disallowed_suffix_is_415_before_anything_is_written` PNG + 300-char suffix returned 200 `images/field.png`. Junk + long suffix stayed 415. `evil.exe` + PNG bytes also returned 200 | `0c588aa4defc5af929715774b23b93621e9734e48bd4c3123b70f508de4e30c5` | same |
+| 5 | `weakref.finalize(...)` removed | `test_assets_dir_is_removed_when_the_app_is_collected` (dir still there after `gc.collect()`) and `test_process_exit_removes_the_assets_dir` (subprocess left `fieldshow-*`) | `352a6d5f94a95fd0d8671e7cc039deaaa68b5afca7fdd811b1133aee53efbffd` | same |
 
 ## Item 5 — `/tmp/fieldshow-*` leak
 
