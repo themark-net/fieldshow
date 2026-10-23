@@ -109,7 +109,7 @@ One position per set. `rotation` is 0 in this version (facing the front sideline
 
 ## Web (`web/app.py` and `web/static/index.html`)
 
-`create_app(show)` returns a FastAPI app. It arranges and charts the show on startup and after each intent. One in-memory show.
+`create_app(show)` returns a FastAPI app. It arranges and charts the show on startup and after each intent. One in-memory show. The temp upload directory (`fieldshow-*`) is removed when that app is garbage-collected and when the process exits.
 
 - `GET /` HTML page that contains the show title and `<input type="range">`.
 - `GET /api/health` → `{"ok": true}`

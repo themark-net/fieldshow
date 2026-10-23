@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import shutil
 import tempfile
+import weakref
 from html import escape
 from pathlib import Path
 
@@ -63,7 +65,10 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
         show = copy.deepcopy(show)
 
     app = FastAPI(title="Fieldshow")
-    app.state.assets = Path(tempfile.mkdtemp(prefix="fieldshow-"))
+    assets = Path(tempfile.mkdtemp(prefix="fieldshow-"))
+    app.state.assets = assets
+    # ignore_errors: a second cleanup, or a dir already gone, should not raise at exit.
+    weakref.finalize(app, shutil.rmtree, assets, True)
     app.state.show_dir = Path(show_path).resolve().parent if show_path else None
     app.state.show = _rebuild(show)
 

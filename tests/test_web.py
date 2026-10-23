@@ -44,11 +44,26 @@ def test_page_and_frame_share_one_show(tmp_path: Path):
     assert picture.content.startswith(b"\x89PNG")
 
 
+def _drop_fastapi_callable_cache() -> None:
+    """FastAPI's callable-classification cache holds the route functions.
+
+    Those functions close over the app, so ``gc.collect()`` cannot collect it
+    until the cache drops them.
+    """
+    import fastapi.dependencies.models as models
+
+    for name in dir(models):
+        clear = getattr(getattr(models, name), "cache_clear", None)
+        if clear is not None:
+            clear()
+
+
 def test_assets_dir_is_removed_when_the_app_is_collected():
     app = create_app()
     assets = Path(app.state.assets)
     assert assets.is_dir()
     assert assets.name.startswith("fieldshow-")
+    _drop_fastapi_callable_cache()
     del app
     gc.collect()
     assert not assets.exists()

@@ -108,6 +108,10 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 - After `del app` and `gc.collect()`, `/tmp/fieldshow-u8nuh5n_` still existed.
 - The subprocess left `fieldshow-fcq2trmi` under its `TMPDIR`.
 
+### Fix
+
+`weakref.finalize(app, shutil.rmtree, path, True)` runs on collection and at interpreter exit. The in-process test clears `fastapi.dependencies.models` callable caches first: those caches hold the route functions, and the functions close over the app, so `gc.collect()` would not see it. Full suite: `119 passed, 2 skipped` in 28.39s. `/tmp/fieldshow-*` was 1071 before that run and 1071 after (delta 0). Pre-existing directories were left in place.
+
 
 ## Item 2 — extensionless upload and magic bytes
 
