@@ -88,3 +88,22 @@ In `web/app.py` only, sniff the body before trusting it: PNG `\x89PNG\r\n\x1a\n`
 ### Planned mutant
 
 Put the suffix decision back on the client filename (`Path(filename).suffix or ".png"`) and skip the sniff. Extensionless text is accepted, and a JPEG body named `photo.png` is stored as `images/field.png`.
+
+### Red-first evidence
+
+Against unmodified `app.py` (suffix only):
+
+```
+PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_field_image.py::test_upload_stores_the_sniffed_type \
+  tests/test_field_image.py::test_upload_rejects_bytes_that_are_not_an_image
+```
+
+`12 failed, 1 passed`. The pass is the extensionless PNG (`yard` -> `images/field.png`), which the suffix fallback already stores that way. The failures:
+
+- `photo.png` + JPEG bytes stored `images/field.png`, not `images/field.jpg`
+- `photo.jpeg` stored `images/field.jpeg`
+- GIF87a and GIF89a named `.png` stored `images/field.png`
+- WebP named `.png` stored `images/field.png`
+- PNG bytes named `pic.gif` stored `images/field.gif`
+- `notes` (extensionless text), `fake.png`, RIFF/WAVE, a short PNG, `\xff\xd8` alone, and `GIF88a` all returned 200

@@ -289,6 +289,68 @@ def test_non_image_upload_is_415_and_leaves_the_show(tmp_path: Path):
     assert list(client.app.state.assets.rglob("upload*")) == []
 
 
+JPEG = b"\xff\xd8\xff" + b"JPEG-yard"
+GIF87 = b"GIF87a" + b"gif-87"
+GIF89 = b"GIF89a" + b"gif-89"
+WEBP = b"RIFF" + b"\x24\x00\x00\x00" + b"WEBP" + b"webp-ok"
+
+# Client filename is a lie on purpose. The stored marker has to follow the bytes.
+SNIFFED = [
+    ("yard", PNG + b"-bare", "images/field.png"),
+    ("photo.png", JPEG, "images/field.jpg"),
+    ("photo.jpeg", JPEG, "images/field.jpg"),
+    ("anim.png", GIF87, "images/field.gif"),
+    ("anim89.png", GIF89, "images/field.gif"),
+    ("still.png", WEBP, "images/field.webp"),
+    ("pic.gif", PNG + b"-as-gif", "images/field.png"),
+]
+
+NOT_AN_IMAGE = [
+    ("notes", b"hello this is text"),
+    ("fake.png", b"MZ-not-really"),
+    ("sound.png", b"RIFF" + b"\x00\x00\x00\x00" + b"WAVE"),
+    ("short.png", b"\x89PNG\r\n"),
+    ("short.jpg", b"\xff\xd8"),
+    ("nope.gif", b"GIF88a-nope"),
+]
+
+
+def _post_image(client: TestClient, filename: str, body: bytes):
+    return client.post(
+        "/api/image",
+        files={"image": (filename, body, "application/octet-stream")},
+    )
+
+
+@pytest.mark.parametrize("filename,body,marker", SNIFFED)
+def test_upload_stores_the_sniffed_type(tmp_path: Path, filename: str, body: bytes, marker: str):
+    path, _ = _show_dir(tmp_path, None)
+    show_png = path.parent / "images" / "field.png"
+    client = _client(path)
+    upload = _post_image(client, filename, body)
+    assert upload.status_code == 200, upload.text
+    assert upload.json()["field_image"] == marker
+    assert client.get("/api/show").json()["field_image"] == marker
+    assert client.get("/api/field-image").content == body
+    assert show_png.read_bytes() == PNG
+    stored = client.app.state.assets / marker
+    assert stored.is_file()
+    assert stored.read_bytes() == body
+    assert list(client.app.state.assets.rglob("upload*")) == []
+
+
+@pytest.mark.parametrize("filename,body", NOT_AN_IMAGE)
+def test_upload_rejects_bytes_that_are_not_an_image(tmp_path: Path, filename: str, body: bytes):
+    path, _ = _show_dir(tmp_path, "images/field.png")
+    client = _client(path)
+    before = client.get("/api/show").json()
+    response = _post_image(client, filename, body)
+    assert response.status_code == 415, response.text
+    assert client.get("/api/show").json() == before
+    assert client.get("/api/field-image").content == PNG
+    assert list(client.app.state.assets.rglob("*")) == []
+
+
 def _without_blocking(fifo: Path, call) -> object:
     """Run ``call``; if it blocks opening the FIFO, unblock it and fail."""
     result: dict = {}
