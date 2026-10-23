@@ -162,7 +162,9 @@ def _start_guard(changed: list[tuple[Path, int]]) -> tuple[int, int]:
             os.close(write_fd)
             os.close(ready_r)
             os.setsid()
-            os.write(ready_w, b"1")
+            # The ready message is the guardian's session id, so the parent can
+            # check it was sent after setsid, not just that something was sent.
+            os.write(ready_w, str(os.getsid(0)).encode())
             os.close(ready_w)
             devnull = os.open(os.devnull, os.O_RDWR)
             for fd in (0, 1, 2):
@@ -198,8 +200,12 @@ def _start_guard(changed: list[tuple[Path, int]]) -> tuple[int, int]:
     os.close(ready_w)
     # Return only once the guardian has its own session, so a group kill
     # right after this cannot take it along with pytest.
-    os.read(ready_r, 1)
+    ready = os.read(ready_r, 32)
     os.close(ready_r)
+    if ready != str(pid).encode():
+        os.close(write_fd)
+        os.waitpid(pid, 0)
+        raise RuntimeError(f"guardian {pid} reported session {ready!r}, not its own: ready came before setsid")
     return pid, write_fd
 
 
@@ -1099,3 +1105,26 @@ def test_guard_survives_a_kill_of_pytests_process_group(tmp_path: Path):
             os.killpg(fake, signal.SIGKILL)
         with contextlib.suppress(ChildProcessError):
             os.waitpid(fake, 0)
+
+
+def test_root_requires_the_child_without_any_env(monkeypatch):
+    """The root default is what makes the image runs strict; it must not need the env var."""
+    monkeypatch.delenv("FIELDSHOW_REQUIRE_CHILD", raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    assert _require_child() is True
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    assert _require_child() is False
+    monkeypatch.setenv("FIELDSHOW_REQUIRE_CHILD", "0")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    assert _require_child() is False
+
+
+def test_guard_is_its_own_session_leader_when_start_returns(tmp_path: Path):
+    """The ready byte must come after ``setsid``: right after ``_start_guard`` the guardian leads its session."""
+    for _ in range(20):
+        guard_pid, guard_fd = _start_guard([])
+        try:
+            assert os.getsid(guard_pid) == guard_pid
+        finally:
+            os.close(guard_fd)
+            os.waitpid(guard_pid, 0)
