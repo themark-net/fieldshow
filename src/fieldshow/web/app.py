@@ -108,6 +108,14 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
 
     @app.post("/api/image")
     async def upload_image(image: UploadFile = File(...)) -> dict:
+        # A present client suffix has to be an image suffix before any scratch file exists.
+        # The stored name still comes from the bytes, not from this suffix.
+        client_suffix = Path(image.filename or "").suffix
+        if client_suffix and client_suffix.lower() not in FIELD_IMAGE_SUFFIXES:
+            raise HTTPException(
+                status_code=415,
+                detail="field image must be png, jpg, webp, or gif",
+            )
         data = await image.read()
         suffix = _sniffed_image_suffix(data)
         if suffix is None:

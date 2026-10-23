@@ -211,3 +211,7 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 - the same name with junk bytes passed (sniff already returns 415)
 - `evil.exe` with PNG bytes returned 200 and `images/field.png`
 - `FIELD.PNG` and the other sniffed uploads passed
+
+### Fix
+
+The handler returns 415 when `Path(filename).suffix.lower()` is non-empty and not in `FIELD_IMAGE_SUFFIXES`, before `image.read()` and before any scratch file. The sniff still chooses the stored suffix. Full suite: `117 passed, 2 skipped` in 28.05s.
