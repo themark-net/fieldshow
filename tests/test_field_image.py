@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import errno
-import getpass
 import json
 import os
 import re
@@ -130,7 +129,8 @@ def _pytest_temp_root(tmp_path_factory) -> None:
     global _TEMP_ROOT
     base = tmp_path_factory.getbasetemp()
     parent = base.parent
-    ours = parent.name == f"pytest-of-{getpass.getuser()}" and parent.lstat().st_uid == os.geteuid()
+    # Name prefix and owner, not getpass: a uid with no passwd entry is "pytest-of-unknown".
+    ours = parent.name.startswith("pytest-of-") and parent.lstat().st_uid == os.geteuid()
     _TEMP_ROOT = parent if ours else base
 
 
