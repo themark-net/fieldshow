@@ -14,6 +14,7 @@ from fieldshow.drill.chart import chart, interpolate
 from fieldshow.drill.image import import_image
 from fieldshow.model import (
     FIELD_IMAGE_RULE,
+    FIELD_IMAGE_SUFFIXES,
     SECTION_ORDER,
     apply_intent,
     demo_show,
@@ -24,6 +25,30 @@ from fieldshow.music.arrange import arrange, playback
 from fieldshow.music.io import PART_NAMES
 
 _PAGE = Path(__file__).with_name("static") / "index.html"
+
+# Stored suffix comes from the bytes, and it has to be one of FIELD_IMAGE_SUFFIXES.
+# JPEG is .jpg. FIELD_IMAGE_SUFFIXES also lists .jpeg; the stored name does not.
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+)
+
+
+def _sniffed_image_suffix(data: bytes) -> str | None:
+    """Return the stored suffix for image magic, or None when the bytes are not an image."""
+    for magic, suffix in _IMAGE_MAGIC:
+        if data.startswith(magic) and suffix in FIELD_IMAGE_SUFFIXES:
+            return suffix
+    if (
+        len(data) >= 12
+        and data.startswith(b"RIFF")
+        and data[8:12] == b"WEBP"
+        and ".webp" in FIELD_IMAGE_SUFFIXES
+    ):
+        return ".webp"
+    return None
 
 
 def _rebuild(show: dict) -> dict:
@@ -83,9 +108,15 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
 
     @app.post("/api/image")
     async def upload_image(image: UploadFile = File(...)) -> dict:
-        suffix = Path(image.filename or "field.png").suffix or ".png"
+        data = await image.read()
+        suffix = _sniffed_image_suffix(data)
+        if suffix is None:
+            raise HTTPException(
+                status_code=415,
+                detail="field image must be png, jpg, webp, or gif",
+            )
         incoming = app.state.assets / f"upload{suffix}"
-        incoming.write_bytes(await image.read())
+        incoming.write_bytes(data)
         try:
             app.state.show = import_image(app.state.show, incoming, app.state.assets)
         except ValueError as exc:
