@@ -5,9 +5,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -112,25 +115,27 @@ def _plant(show_dir: Path, value: str) -> None:
 _CHILD_WAIT_SECONDS = 60
 
 
-def _open_up_dirs(tmp_path: Path, stop: Path) -> None:
-    """chmod 0755 from ``tmp_path`` up through ``stop``, and not above it.
-
-    ``stop`` is pytest's basetemp for this run. ``/`` and ``/tmp`` stay hard
-    stops so a wrong ``stop`` cannot walk out of the temp tree.
-    """
-    for parent in [tmp_path, *tmp_path.parents]:
-        if str(parent) in ("/", "/tmp"):
-            break
-        parent.chmod(0o755)
-        if parent == stop:
-            break
-
-
 @contextlib.contextmanager
 def _reachable_by_others(tmp_path: Path):
-    """Let another uid reach ``tmp_path`` while the block runs."""
-    _open_up_dirs(tmp_path, tmp_path.parent)
-    yield
+    """Let another uid reach ``tmp_path`` while the block runs.
+
+    ``tmp_path`` itself is opened to 0755, like the dirs inside it. Each ancestor
+    up to ``/`` that lacks ``o+x`` gets search only (no read, no write), because
+    pytest makes ``/tmp/pytest-of-<user>`` and its basetemp 0700. Every ancestor
+    mode is put back when the block ends, so nothing above the test stays wider.
+    """
+    tmp_path.chmod(0o755)
+    changed: list[tuple[Path, int]] = []
+    try:
+        for parent in tmp_path.parents:
+            mode = stat.S_IMODE(parent.stat().st_mode)
+            if not mode & stat.S_IXOTH:
+                parent.chmod(mode | stat.S_IXOTH)
+                changed.append((parent, mode))
+        yield
+    finally:
+        for parent, mode in reversed(changed):
+            parent.chmod(mode)
 
 
 def _wait_child(pid: int, timeout: float) -> int:
@@ -167,7 +172,30 @@ def _unprivileged(tmp_path: Path, check) -> None:
         _run_as_nobody(check)
 
 
+def _nobody_temp_dirs() -> set[Path]:
+    return {
+        path
+        for path in Path(tempfile.gettempdir()).glob("fieldshow-*")
+        if path.is_dir() and not path.is_symlink() and path.lstat().st_uid == 65534
+    }
+
+
 def _run_as_nobody(check) -> None:
+    """Fork, drop to uid 65534, run ``check``.
+
+    The child leaves with ``os._exit``, so the app finalizer that removes each
+    ``fieldshow-*`` upload dir never runs there. The parent removes the dirs
+    that child created once it has been reaped.
+    """
+    before = _nobody_temp_dirs()
+    try:
+        _fork_as_nobody(check)
+    finally:
+        for path in _nobody_temp_dirs() - before:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def _fork_as_nobody(check) -> None:
     pid = os.fork()
     if pid == 0:
         code = 1
