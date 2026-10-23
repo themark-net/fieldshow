@@ -48,7 +48,7 @@ Before you replace anything, tag the running image and back up the built show, s
 
 ```bash
 { OLD=$(ssh mark@maximum 'cat ~/fieldshow-data/DEPLOYED_SHA 2>/dev/null') || true; } && { [ -n "$SHA" ] && [ -n "$OLD" ] && [ "$OLD" != "$SHA" ] || { echo "stop: SHA unset, ssh failed, or DEPLOYED_SHA empty or already $SHA" >&2; false; }; } &&
-B=$(ssh mark@maximum "{ docker image ls --format '{{.Tag}}' fieldshow; ls ~/fieldshow-data | sed -n 's/^show[.]json[.]//p'; } | sed -n 's/^pre-\($OLD-to-[0-9a-f]*\)\$/\1/p' | sort -u") && { [ "$(printf '%s\n' "$B" | grep -c .)" -le 1 ] || { echo "stop: several pre-$OLD-to-* sets: $B" >&2; false; }; } && B=${B:-$OLD-to-$SHA} && echo "rollback set: pre-$B" &&
+B=$(ssh mark@maximum "{ docker image ls --format '{{.Tag}}' fieldshow; ls ~/fieldshow-data | sed -n 's/^show[.]json[.]//p'; } | sed -n 's/^pre-\($OLD-to-[0-9a-f]*\)\$/\1/p' | sort -u") && { [ "$(printf '%s\n' "$B" | grep -c .)" -le 1 ] || { echo "stop: several pre-$OLD-to-* sets: $B. Keep the oldest; retire each other set X with: ssh mark@maximum 'cd ~/fieldshow-data; U=used-X-\$(date +%Y%m%d%H%M%S); [ ! -e show.json.pre-X ] || mv show.json.pre-X show.json.\$U; [ ! -e parts.pre-X ] || mv parts.pre-X parts.\$U; docker tag fieldshow:pre-X fieldshow:\$U && docker rmi fieldshow:pre-X'" >&2; false; }; } && B=${B:-$OLD-to-$SHA} && echo "rollback set: pre-$B" &&
 ssh mark@maximum "cd ~/fieldshow && { docker image inspect fieldshow:pre-$B >/dev/null 2>&1 || docker tag \"\$(docker compose images -q fieldshow)\" fieldshow:pre-$B; }" &&
 ssh mark@maximum "cd ~/fieldshow-data && { [ -e show.json.pre-$B ] || { rm -rf parts.pre-$B && cp -a parts parts.pre-$B && cp -p show.json show.json.pre-$B; }; }" &&
 rsync -az --delete --exclude /compose.override.yaml "/tmp/fieldshow-deploy-$SHA/" mark@maximum:fieldshow/ &&
@@ -57,7 +57,7 @@ ssh mark@maximum "echo '$SHA' > ~/fieldshow-data/DEPLOYED_SHA" &&
 curl -fsS http://10.42.0.238:8876/api/health
 ```
 
-The lines are chained with `&&`, so the first failure stops the rest. It stops at once with a message if `SHA` is unset, ssh fails, or `DEPLOYED_SHA` is missing, empty or already equals `$SHA` (nothing to do). It also stops if more than one `pre-<OLD>-to-*` set exists (possible only from state left by older versions of this doc); keep the oldest and retire or prune the rest. The tag fails if no container is running (`images -q` prints nothing).
+The lines are chained with `&&`, so the first failure stops the rest. It stops at once with a message if `SHA` is unset, ssh fails, or `DEPLOYED_SHA` is missing, empty or already equals `$SHA` (nothing to do). It also stops if more than one `pre-<OLD>-to-*` set exists (possible only from state left by older versions of this doc); keep the oldest and retire each of the others with the command the stop message prints (replace `X` with the set name, e.g. `e786df3-to-aaaaaaa`); it renames the set to `used-*` without a rollback. The tag fails if no container is running (`images -q` prints nothing).
 
 The block is safe to rerun, with the same `SHA` or a different one, as long as `DEPLOYED_SHA` still names the replaced SHA. The second line finds any existing `pre-<OLD>-to-*` set, so a retry with a fixed `SHA` reuses the tag and backup from the first attempt (named after that first `SHA`) instead of tagging or copying whatever a failed attempt left running or rebuilt. The tag is skipped if `fieldshow:pre-$B` exists and the backup is skipped if `show.json.pre-$B` exists, so a rerun never overwrites the rollback point with the new image or the new show. `show.json.pre-$B` is copied last, so it only exists once `parts.pre-$B` is complete. `DEPLOYED_SHA` changes only after the recreate succeeds; after that a rerun stops at the first line.
 
@@ -74,6 +74,12 @@ If `docker compose build` fails while pulling from Docker Hub with `network is u
 Current rollback target (from Sysadmin, before this naming scheme): image `fieldshow:pre-a803da2-to-e786df3`, ID `e0e247aeb14e` (the `a803da2` image), with data `~/fieldshow-data/show.json.pre-e786df3` (the show `a803da2` built). There is no `parts.pre-*` backup for it.
 
 Older fallback: `fieldshow:pre-a803da2`, ID `0f631c29aa48`, is the image from before `a803da2` (about `6a4b4c8`, before T-0005). It has no `/data` mount support and cannot serve part PDFs. Use it only if the `a803da2` image is unusable; see the last paragraph.
+
+Sysadmin confirmed both IDs on maximum on 2026-10-22. Both legacy images also carry a protective `keep-*` tag, so no rollback retire or prune can leave them untagged and let Docker delete them. `keep-*` never matches Update's `pre-` lookup or prune's `used-` pattern. This one-time step has already been applied on maximum (Sysadmin, 2026-10-22). It is idempotent, so rerunning it is harmless:
+
+```bash
+ssh mark@maximum 'docker tag e0e247aeb14e fieldshow:keep-a803da2 && docker tag 0f631c29aa48 fieldshow:keep-pre-t0005 && docker image ls fieldshow'
+```
 
 Roll back to the current target:
 
@@ -92,7 +98,7 @@ With no parts backup, `parts/` keeps the PDFs `e786df3` engraved. For the same `
 Roll back an update made with the block above, from its `pre-<OLD>-to-<NEW>` set. Update keeps at most one live (`pre-`) set per replaced SHA, and rollback uses that one. Its `<NEW>` is the first SHA attempted from `<OLD>`, which may differ from the SHA that finally went out. Find it first:
 
 ```bash
-ssh mark@maximum 'docker image ls fieldshow; ls -d ~/fieldshow-data/*.pre-*'
+ssh mark@maximum 'docker image ls fieldshow; ls -d ~/fieldshow-data/*.pre-* 2>/dev/null; true'
 ```
 
 Then fill in `OLD` and `NEW` on the first line and run:
@@ -115,21 +121,21 @@ The second line checks the tag, `show.json.pre-$B` and `parts.pre-$B` before any
 Prune retired sets, keeping the newest `KEEP` (by timestamp). `docker rmi` of a tag deletes the image only once no other tag or container uses it; the running image keeps its compose name:
 
 ```bash
-ssh mark@maximum 'KEEP=1; cd ~/fieldshow-data && for u in $({ docker image ls --format "{{.Tag}}" fieldshow; ls | sed -n "s/^show[.]json[.]//p"; } | grep "^used-" | sort -u | sort -t- -k5 | head -n -$KEEP); do docker rmi "fieldshow:$u" >/dev/null 2>&1; rm -rf "show.json.$u" "parts.$u"; done; docker image ls fieldshow; ls -d *.used-* 2>/dev/null; true'
+ssh mark@maximum 'KEEP=1; cd ~/fieldshow-data && for u in $({ docker image ls --format "{{.Tag}}" fieldshow; ls | sed -n "s/^show[.]json[.]//p"; } | grep "^used-" | sort -u | sort -t- -k5 | head -n -$KEEP); do id=$(docker image inspect -f "{{.Id}}" "fieldshow:$u" 2>/dev/null); case "$id" in sha256:e0e247aeb14e*|sha256:0f631c29aa48*) echo "keep $u (legacy image)"; continue;; esac; if [ -n "$id" ] && ! docker rmi "fieldshow:$u" >/dev/null; then echo "rmi fieldshow:$u failed, backups kept" >&2; continue; fi; rm -rf "show.json.$u" "parts.$u"; done; docker image ls fieldshow; ls -d *.used-* 2>/dev/null; true'
 ```
 
-`KEEP=0` removes them all. Prune never touches `pre-*` sets, the legacy `show.json.pre-e786df3`, or the IDs the legacy snippets use.
+`KEEP=0` removes them all. Prune never touches `pre-*` or `keep-*` tags, or the legacy `show.json.pre-e786df3`. It also skips any `used-*` set whose image is one of the two legacy IDs (`e0e247aeb14e`, `0f631c29aa48`); the `keep-*` tags protect those images as well. If `docker rmi` fails, prune prints the error and keeps that set's backups, so the next prune retries it. The sort assumes GNU `head` (for `head -n -$KEEP`) and dash-free hex SHAs (so `-k5` is the timestamp); both hold on maximum.
 
-Only for the older `fieldshow:pre-a803da2` fallback: images from before `a803da2` may not start against the `/data` override. Move the override out of `~/fieldshow` (inside it, the next `rsync --delete` would remove it), retag that image as above, and recreate. Do not run Update while the fallback is active; undo it first:
+Only for the older `fieldshow:pre-a803da2` fallback: images from before `a803da2` may not start against the `/data` override. Move the override out of `~/fieldshow` (inside it, the next `rsync --delete` would remove it), retag that image as above, and recreate. Both this and the undo check the image first, so a missing image stops them before the override moves. Do not run Update while the fallback is active; undo it first:
 
 ```bash
-ssh mark@maximum '{ [ ! -e ~/fieldshow/compose.override.yaml ] || mv ~/fieldshow/compose.override.yaml ~/fieldshow-data/compose.override.yaml.off; } && cd ~/fieldshow && docker tag 0f631c29aa48 "$(docker compose config --images fieldshow)" && docker compose up -d --no-build --force-recreate fieldshow'
+ssh mark@maximum 'docker image inspect 0f631c29aa48 >/dev/null && { [ ! -e ~/fieldshow/compose.override.yaml ] || mv ~/fieldshow/compose.override.yaml ~/fieldshow-data/compose.override.yaml.off; } && cd ~/fieldshow && docker tag 0f631c29aa48 "$(docker compose config --images fieldshow)" && docker compose up -d --no-build --force-recreate fieldshow'
 ```
 
 To undo it, put the override back, retag the `a803da2` image, recreate, and record `a803da2` as running. The undo does not restore `show.json.pre-e786df3`, so the `a803da2` image serves the show on `/data`, usually the one `e786df3` built. The build code is the same in `a803da2` and `e786df3`, so the content is equivalent; restore the backup first (as in the current-target rollback) if you want it exactly:
 
 ```bash
-ssh mark@maximum '{ [ ! -e ~/fieldshow-data/compose.override.yaml.off ] || mv ~/fieldshow-data/compose.override.yaml.off ~/fieldshow/compose.override.yaml; } && cd ~/fieldshow && docker tag e0e247aeb14e "$(docker compose config --images fieldshow)" && docker compose up -d --no-build --force-recreate fieldshow && echo a803da2 > ~/fieldshow-data/DEPLOYED_SHA' &&
+ssh mark@maximum 'docker image inspect e0e247aeb14e >/dev/null && { [ ! -e ~/fieldshow-data/compose.override.yaml.off ] || mv ~/fieldshow-data/compose.override.yaml.off ~/fieldshow/compose.override.yaml; } && cd ~/fieldshow && docker tag e0e247aeb14e "$(docker compose config --images fieldshow)" && docker compose up -d --no-build --force-recreate fieldshow && echo a803da2 > ~/fieldshow-data/DEPLOYED_SHA' &&
 curl -fsS http://10.42.0.238:8876/api/health
 ```
 
