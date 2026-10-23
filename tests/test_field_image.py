@@ -248,6 +248,18 @@ def test_reachable_by_others_adds_only_search_and_restores(tmp_path: Path):
                 parent.chmod(snapshot[parent])
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="the uid 65534 child only runs as root")
+def test_unprivileged_child_leaves_no_upload_dirs(tmp_path: Path):
+    """As root the child builds apps as uid 65534 and leaves via os._exit, so the parent cleans up."""
+    path, _ = _show_dir(tmp_path, "images/field.png")
+    before = _nobody_temp_dirs()
+
+    def check() -> None:
+        assert _client(path).get("/api/field-image").status_code == 200
+
+    _unprivileged(tmp_path, check)
+    assert _nobody_temp_dirs() - before == set()
+
 def test_wait_child_kills_a_hung_child_within_the_timeout():
     """A child that sleeps forever is killed, and the helper raises, inside the timeout."""
     pid = os.fork()
