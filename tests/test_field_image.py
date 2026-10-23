@@ -966,7 +966,12 @@ def test_guard_kills_an_unreaped_child_and_restores_modes_when_its_pipe_closes(t
         os.write(guard_fd, f"child {sleeper}\n".encode())
         os.close(guard_fd)
         os.waitpid(guard_pid, 0)
-        _done, status = os.waitpid(sleeper, 0)
+        deadline = time.monotonic() + 5
+        done, status = os.waitpid(sleeper, os.WNOHANG)
+        while not done and time.monotonic() < deadline:
+            time.sleep(0.05)
+            done, status = os.waitpid(sleeper, os.WNOHANG)
+        assert done, f"the guardian left child {sleeper} running"
         assert os.waitstatus_to_exitcode(status) == -signal.SIGKILL
         assert _mode(opened) == 0o700, oct(_mode(opened))
     finally:
