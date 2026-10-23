@@ -32,3 +32,9 @@ The session picked a reversible default, wrote it down, and kept going. Issue th
 | r3: upload size cap and `nosniff` are not touched | Fix them here | PM: already tracked in a separate fieldshow issue. |
 | r3: "field image not drawn" proposed as its own issue in the handoff | Keep it under #4 | If #4 closes with this slice, the item loses its tracker. |
 | r3: done by hand, no Grok Build run | Headless Build | Small harness change; hand edits were quicker to verify. |
+| r4: remove the assets dir in the FastAPI lifespan shutdown; keep the finalizer as a backup | A SIGTERM handler, or `atexit` | uvicorn 0.54 re-raises SIGTERM after shutdown, so atexit and finalizers never run; the lifespan `finally` is the one hook uvicorn runs on SIGTERM, SIGINT and a clean stop, without owning signal handling. |
+| r4: under root, or with `FIELDSHOW_REQUIRE_CHILD=1`, the reach check fails instead of skipping; plus a direct default-run test | Pin the skip count | A count breaks on every new test; failing names the dir. Root runs are the only place the child runs, so a skip there is always a bug (U3: 60 silent skips). |
+| r4: `_start_guard` waits for the guardian's `setsid` before returning | Leave it; the r3 kill -9 test passed | The new group-kill test failed 5 of 5 on the old helper: a group kill right after `_start_guard` took the guardian too. |
+| r4: getppid, mode-check and setsid mutants get tests, not residuals | Document them | Each test is a few lines and runs in about a second on the host. |
+| r4: the 1248 old `/tmp/fieldshow-*` dirs on nimo are left, listed as a cleanup item | Delete them | PM asked to leave them. |
+| r4: CLI `import-image` suffix trust, `nosniff` and size cap (#5), "field image not drawn" stay residuals | Fix here | Out of scope for this round. |

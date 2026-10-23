@@ -388,3 +388,9 @@ Fixed as planned. Red-first at `a7d2e06`, the 10-mutant table (10 killed), and t
 - Tester S1 / Reviewer SF-A: a wrong temp-root guess, or a basetemp parent without `o+x`, turns the uid 65534 tests into skips and the run stays green (Tester mutant U3). Under root, or with `FIELDSHOW_REQUIRE_CHILD=1`, that skip becomes a failure; a direct test pins the temp root to `pytest-of-<user>` when pytest made it.
 - Tester S2: no test pins the `RIFF` prefix for WebP (mutant T3). Add `XXXX....WEBP` to the not-an-image table.
 - Reviewer uncovered mutants: the `getppid` check, the guardian's mode check, and the guardian's own session. Each gets a direct test.
+
+### R4 outcome
+
+- B1 confirmed and fixed in `c84e22e` (lifespan `finally` removes the dir). Red at `85e1b1b` src: the SIGTERM serve test and the lifespan test failed; SIGINT passed. Green at `c84e22e`.
+- The new group-kill test found a second bug in the harness: `_start_guard` returned before the guardian's `setsid`. Fixed in `275829e` with a ready byte.
+- 18 mutants (r3's 10 plus 8 new), 18 killed. Counts and the per-test red table are in the handoff, Round 4.
