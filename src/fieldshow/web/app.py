@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import shutil
 import tempfile
@@ -64,10 +65,23 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
     else:
         show = copy.deepcopy(show)
 
-    app = FastAPI(title="Fieldshow")
     assets = Path(tempfile.mkdtemp(prefix="fieldshow-"))
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # The server's shutdown is the one cleanup that runs on SIGTERM:
+        # uvicorn shuts down, then re-raises the signal, so neither the
+        # finalizer below nor atexit gets a chance.
+        assets.mkdir(mode=0o700, exist_ok=True)
+        try:
+            yield
+        finally:
+            shutil.rmtree(assets, ignore_errors=True)
+
+    app = FastAPI(title="Fieldshow", lifespan=lifespan)
     app.state.assets = assets
-    # ignore_errors: a second cleanup, or a dir already gone, should not raise at exit.
+    # Backup for an app that never ran a lifespan (tests, embedding), or an
+    # interpreter that exits normally. ignore_errors: the dir may be gone already.
     weakref.finalize(app, shutil.rmtree, assets, True)
     app.state.show_dir = Path(show_path).resolve().parent if show_path else None
     app.state.show = _rebuild(show)
