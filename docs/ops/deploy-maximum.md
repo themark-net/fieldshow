@@ -47,7 +47,7 @@ curl -fsS http://10.42.0.238:8876/api/health
 Before you replace anything, tag the running image and back up the built show, so there is something to roll back to. The replaced SHA comes from `~/fieldshow-data/DEPLOYED_SHA`. Both the tag and the backups are named `pre-<replaced>-to-<new>`, for example `fieldshow:pre-e786df3-to-<new>` with `show.json.pre-e786df3-to-<new>` and `parts.pre-e786df3-to-<new>`. They are taken at most once per replaced SHA: if a `pre-<OLD>-to-*` tag or `show.json.pre-<OLD>-to-*` already exists, the block reuses that set (`$B`) and does not tag or copy again:
 
 ```bash
-{ OLD=$(ssh mark@maximum 'cat ~/fieldshow-data/DEPLOYED_SHA 2>/dev/null') || true; } && { [ -n "$OLD" ] && [ "$OLD" != "$SHA" ] || { echo "stop: DEPLOYED_SHA is empty or already $SHA" >&2; false; }; } &&
+{ OLD=$(ssh mark@maximum 'cat ~/fieldshow-data/DEPLOYED_SHA 2>/dev/null') || true; } && { [ -n "$SHA" ] && [ -n "$OLD" ] && [ "$OLD" != "$SHA" ] || { echo "stop: SHA unset, or DEPLOYED_SHA empty or already $SHA" >&2; false; }; } &&
 B=$(ssh mark@maximum "{ docker image ls --format '{{.Tag}}' fieldshow; ls ~/fieldshow-data | sed -n 's/^show[.]json[.]//p'; } | sed -n 's/^pre-\($OLD-to-[0-9a-f]*\)\$/\1/p' | head -n1") && B=${B:-$OLD-to-$SHA} && echo "rollback set: pre-$B" &&
 ssh mark@maximum "cd ~/fieldshow && { docker image inspect fieldshow:pre-$B >/dev/null 2>&1 || docker tag \"\$(docker compose images -q fieldshow)\" fieldshow:pre-$B; }" &&
 ssh mark@maximum "cd ~/fieldshow-data && { [ -e show.json.pre-$B ] || { rm -rf parts.pre-$B && cp -a parts parts.pre-$B && cp -p show.json show.json.pre-$B; }; }" &&
@@ -95,8 +95,12 @@ OLD=<OLD> && B="$OLD-to-<NEW>" &&
 ssh mark@maximum "cd ~/fieldshow-data && cp -p show.json.pre-$B show.json && rm -rf parts && cp -a parts.pre-$B parts" &&
 ssh mark@maximum "cd ~/fieldshow && docker tag fieldshow:pre-$B \"\$(docker compose config --images fieldshow)\" && docker compose up -d --no-build --force-recreate fieldshow" &&
 ssh mark@maximum "echo '$OLD' > ~/fieldshow-data/DEPLOYED_SHA" &&
+U="used-$B-$(date +%Y%m%d%H%M%S)" &&
+ssh mark@maximum "cd ~/fieldshow-data && mv show.json.pre-$B show.json.$U && mv parts.pre-$B parts.$U && docker tag fieldshow:pre-$B fieldshow:$U && docker rmi fieldshow:pre-$B >/dev/null" &&
 curl -fsS http://10.42.0.238:8876/api/health
 ```
+
+After restoring, the block retires the set: the tag and the `show.json`/`parts` backups are renamed `used-<OLD>-to-<NEW>-<timestamp>`. Update's lookup only matches `pre-<OLD>-to-*`, so the next Update from `<OLD>` takes a fresh set from the show as it is then, not this stale one. A rerun of this block after the retire stops at the first `cp` (the set is gone); the rollback has already happened. Delete old `used-*` tags and backups by hand when no longer wanted.
 
 `docker compose config --images fieldshow` prints the image name Compose runs for the service, so the retag points that name at the old image. `--no-build` makes `up` run the image under that name exactly as tagged. If the name were missing it would fail rather than quietly build a fresh image from the new source on disk. Re-rsync the old SHA's export later, so the source on maximum matches the running image again. Rollback leaves the `pre-*` tag and backups in place, so it is safe to rerun.
 
