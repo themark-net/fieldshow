@@ -54,3 +54,37 @@ No production edit. The `finally` unlink was already correct. The assertions are
 | --- | --- | --- | --- | --- |
 | 1 | Delete the `finally` unlink | `test_upload_is_stored_as_a_marker_and_served` (left `upload.png`), `test_non_image_upload_is_415_and_leaves_the_show` (left `upload.exe`) | `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` | same |
 | 1 | Unlink only in `else` (success path) | `test_non_image_upload_is_415_and_leaves_the_show` left `upload.exe`. The success test stayed green | `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` | same |
+
+## Item 2 — extensionless upload and magic bytes
+
+### Symptom
+
+`POST /api/image` decides 415 from the client filename suffix only. An extensionless file has an empty suffix, so the handler substitutes `.png` and `import_image` accepts it. A file named `fake.png` whose bytes are not a PNG is stored as `images/field.png`. The stored extension follows the client name, not the bytes.
+
+### Where
+
+`src/fieldshow/web/app.py:86-88`:
+
+```python
+suffix = Path(image.filename or "field.png").suffix or ".png"
+incoming = app.state.assets / f"upload{suffix}"
+incoming.write_bytes(await image.read())
+```
+
+`import_image` (`src/fieldshow/drill/image.py:19-21`) then accepts any file whose suffix is in `FIELD_IMAGE_SUFFIXES`. That module stays as it is. The CLI `import-image` path keeps today's suffix check.
+
+### Hypothesis
+
+The upload handler never reads the magic bytes. Empty suffix becomes `.png` before the bytes are considered, so any extensionless payload is a PNG as far as the show is concerned. A `.png` name skips the 415 even when the body is `MZ` or plain text. The scratch name is `upload` plus the client suffix, so the copy `import_image` writes inherits that suffix.
+
+### Planned surgical fix
+
+In `web/app.py` only, sniff the body before trusting it: PNG `\x89PNG\r\n\x1a\n`, JPEG `\xff\xd8\xff`, GIF `GIF87a` / `GIF89a`, WebP `RIFF` + `WEBP` at offset 8. Anything else is 415 and nothing is left under `app.state.assets`. The scratch file and the stored `images/field.<ext>` use the sniffed suffix (`.png`, `.jpg`, `.gif`, `.webp`), and that suffix must be one of `FIELD_IMAGE_SUFFIXES`. The client filename is not used for the stored name. An extensionless real PNG is `images/field.png`.
+
+### Planned test
+
+`TestClient` uploads. Extensionless text and a `.png`-named non-image (plus RIFF/WAVE, a short PNG, a two-byte JPEG) return 415, the show JSON is unchanged, the original field image still serves, and `assets` has no `upload*`. Extensionless PNG bytes are stored as `images/field.png`. JPEG, GIF87a, GIF89a, and WebP bodies are stored as `.jpg`, `.gif`, `.gif`, and `.webp` even when the client name says `.png`. A `.jpeg` name with JPEG bytes is stored as `.jpg`, not `.jpeg`. A `.gif` name with PNG bytes is stored as `.png`. The show directory's `images/field.png` is not overwritten.
+
+### Planned mutant
+
+Put the suffix decision back on the client filename (`Path(filename).suffix or ".png"`) and skip the sniff. Extensionless text is accepted, and a JPEG body named `photo.png` is stored as `images/field.png`.
