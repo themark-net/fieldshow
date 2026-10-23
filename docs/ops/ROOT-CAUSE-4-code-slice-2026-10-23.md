@@ -29,3 +29,15 @@ Through `TestClient`: POST a PNG and glob `upload*`; POST `evil.exe` with a non-
 ### Planned mutant
 
 Delete `finally: incoming.unlink(missing_ok=True)` (`app.py:93-94`), or move that unlink so it runs only on success. The new 415 assertion must fail for the success-only form. The new success assertion must fail if the success path stops unlinking.
+
+### Red-first evidence
+
+The production `finally` already deletes the scratch file, so the new assertions are green against unmodified `app.py`. Red evidence is the same assertions against the mutant (the `finally` unlink removed, file restored afterwards, `git diff --exit-code` clean, sha256 `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` both before and after).
+
+```
+PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_field_image.py::test_upload_is_stored_as_a_marker_and_served \
+  tests/test_field_image.py::test_non_image_upload_is_415_and_leaves_the_show
+```
+
+`2 failed`. `test_upload_is_stored_as_a_marker_and_served` left `upload.png`. `test_non_image_upload_is_415_and_leaves_the_show` still returned 415 and left `upload.exe`.

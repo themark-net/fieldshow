@@ -224,6 +224,7 @@ def test_upload_is_stored_as_a_marker_and_served(tmp_path: Path):
     served = client.get("/api/field-image")
     assert served.content == PNG + b"-upload"
     assert (path.parent / "images" / "field.png").read_bytes() == PNG
+    assert list(client.app.state.assets.rglob("upload*")) == []
 
 
 def test_serve_404s_on_a_symlink_loop_or_unreadable_images_dir(tmp_path: Path):
@@ -285,6 +286,7 @@ def test_non_image_upload_is_415_and_leaves_the_show(tmp_path: Path):
     assert response.status_code == 415
     assert client.get("/api/show").json() == before
     assert client.get("/api/field-image").content == PNG
+    assert list(client.app.state.assets.rglob("upload*")) == []
 
 
 def _without_blocking(fifo: Path, call) -> object:
