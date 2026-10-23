@@ -145,3 +145,18 @@ No root. `test_open_up_dirs_stops_at_the_scoped_root`: build `above/scoped/neste
 
 1. `_open_up_dirs` ignores `stop` and walks to `/` or `/tmp` again. `above` becomes `0o755`.
 2. `_wait_child` blocks in `os.waitpid(pid, 0)`. The daemon-thread join hits 10s and the test fails.
+
+### Red-first evidence
+
+Against the extracted helpers (stop ignored, `waitpid` unbounded). `/tmp/pytest-of-mark` was mode `700` before and after; the test puts ancestor modes back.
+
+```
+PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=line \
+  tests/test_field_image.py::test_open_up_dirs_stops_at_the_scoped_root \
+  tests/test_field_image.py::test_wait_child_kills_a_hung_child_within_the_timeout
+```
+
+`2 failed` in 10.24s.
+
+- `above` was `0o755` (`assert 493 == 448`)
+- `_wait_child blocked past 10s on a child that sleeps for an hour; the suite killed it so this run would finish`

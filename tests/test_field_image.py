@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -156,6 +158,77 @@ def _unprivileged(tmp_path: Path, check) -> None:
             os._exit(code)
     status = _wait_child(pid, _CHILD_WAIT_SECONDS)
     assert status == 0, "check failed as uid 65534"
+
+
+def _mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+def test_open_up_dirs_stops_at_the_scoped_root(tmp_path: Path):
+    """A directory above the scoped root stays 0700. Dirs inside it are opened."""
+    above = tmp_path / "above"
+    scoped = above / "scoped"
+    inner = scoped / "nested" / "inner"
+    inner.mkdir(parents=True)
+    for path in (above, scoped, inner.parent, inner):
+        path.chmod(0o700)
+    saved = []
+    for parent in [inner, *inner.parents]:
+        if str(parent) in ("/", "/tmp"):
+            break
+        saved.append((parent, _mode(parent)))
+    try:
+        _open_up_dirs(inner, scoped)
+        assert _mode(above) == 0o700, f"{above} is {oct(_mode(above))}"
+        assert _mode(scoped) == 0o755, f"{scoped} is {oct(_mode(scoped))}"
+        assert _mode(inner.parent) == 0o755, f"{inner.parent} is {oct(_mode(inner.parent))}"
+        assert _mode(inner) == 0o755, f"{inner} is {oct(_mode(inner))}"
+    finally:
+        for parent, mode in reversed(saved):
+            parent.chmod(mode)
+
+
+def test_wait_child_kills_a_hung_child_within_the_timeout():
+    """A child that sleeps forever is killed, and the helper raises, inside the timeout."""
+    pid = os.fork()
+    if pid == 0:
+        time.sleep(3600)
+        os._exit(0)
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["status"] = _wait_child(pid, 1)
+        except BaseException as exc:
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    try:
+        worker.join(10)
+        if worker.is_alive():
+            pytest.fail(
+                "_wait_child blocked past 10s on a child that sleeps for an hour; "
+                "the suite killed it so this run would finish"
+            )
+        assert "error" in box, box
+        assert "killed" in str(box["error"]).lower()
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            pytest.fail(f"child {pid} is still alive after _wait_child returned")
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+        worker.join(2)
 
 
 @pytest.mark.parametrize("bad", BAD)
