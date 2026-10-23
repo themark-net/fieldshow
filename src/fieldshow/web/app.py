@@ -129,8 +129,8 @@ def create_app(show: dict | None = None, show_path: str | Path | None = None) ->
                 detail="field image must be png, jpg, webp, or gif",
             )
         incoming = app.state.assets / f"upload{suffix}"
-        incoming.write_bytes(data)
         try:
+            incoming.write_bytes(data)
             app.state.show = import_image(app.state.show, incoming, app.state.assets)
         except ValueError as exc:
             raise HTTPException(status_code=415, detail=str(exc)) from exc
