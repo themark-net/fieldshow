@@ -4,7 +4,7 @@ Worktree `tmp/4-code-slice`, branch `build/4-code-slice`, base `origin/main` `64
 
 Baseline before any edit: `98 passed, 2 skipped` in 26.84s. `/tmp/fieldshow-*` went from 435 to 510 (delta 75). Pre-existing dirs were left in place.
 
-## Item 1 — scratch upload file is not asserted
+## Item 1: scratch upload file is not asserted
 
 ### Symptom
 
@@ -60,7 +60,7 @@ No production edit. The `finally` unlink was already correct. The assertions are
 | 4 | Early client-suffix check removed, sniff left in place | `test_disallowed_suffix_is_415_before_anything_is_written` PNG + 300-char suffix returned 200 `images/field.png`. Junk + long suffix stayed 415. `evil.exe` + PNG bytes also returned 200 | `0c588aa4defc5af929715774b23b93621e9734e48bd4c3123b70f508de4e30c5` | same |
 | 5 | `weakref.finalize(...)` removed | `test_assets_dir_is_removed_when_the_app_is_collected` (dir still there after `gc.collect()`) and `test_process_exit_removes_the_assets_dir` (subprocess left `fieldshow-*`) | `352a6d5f94a95fd0d8671e7cc039deaaa68b5afca7fdd811b1133aee53efbffd` | same |
 
-## Item 5 — `/tmp/fieldshow-*` leak
+## Item 5: `/tmp/fieldshow-*` leak
 
 ### Symptom
 
@@ -114,7 +114,7 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 `weakref.finalize(app, shutil.rmtree, path, True)` runs on collection and at interpreter exit. The in-process test clears `fastapi.dependencies.models` callable caches first: those caches hold the route functions, and the functions close over the app, so `gc.collect()` would not see it. Full suite: `119 passed, 2 skipped` in 28.39s. `/tmp/fieldshow-*` was 1071 before that run and 1071 after (delta 0). Pre-existing directories were left in place.
 
 
-## Item 2 — extensionless upload and magic bytes
+## Item 2: extensionless upload and magic bytes
 
 ### Symptom
 
@@ -171,7 +171,7 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 
 `_sniffed_image_suffix` in `web/app.py` picks `.png` / `.jpg` / `.gif` / `.webp` from the magic bytes, each checked against `FIELD_IMAGE_SUFFIXES`. A miss is 415 before the scratch file is written. `import_image` and the CLI are unchanged. Full suite: `111 passed, 2 skipped` in 26.92s.
 
-## Item 3 — `_unprivileged` chmod scope and `waitpid`
+## Item 3: `_unprivileged` chmod scope and `waitpid`
 
 ### Symptom
 
@@ -225,7 +225,7 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 
 As root, `/tmp/pytest-of-<user>` stays `0o700`, so a dropped uid 65534 may still be unable to walk into the default pytest tree. A basetemp whose parent is already traversable (`/tmp`, or `--basetemp` directly under it) is opened. This session did not run the image pytest as root.
 
-## Item 4 — long filename suffix returns 500
+## Item 4: long filename suffix returns 500
 
 ### Symptom
 
@@ -272,7 +272,7 @@ PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:
 
 The handler returns 415 when `Path(filename).suffix.lower()` is non-empty and not in `FIELD_IMAGE_SUFFIXES`, before `image.read()` and before any scratch file. The sniff still chooses the stored suffix. Full suite: `117 passed, 2 skipped` in 28.05s.
 
-## Item 3 r2 — `_unprivileged` under root after the chmod-scope fix (verification pass, 2026-10-23)
+## Item 3 r2: `_unprivileged` under root after the chmod-scope fix (verification pass, 2026-10-23)
 
 ### Symptom
 
@@ -298,7 +298,7 @@ Replace the walk with a context manager `_reachable_by_others(tmp_path)`. For ev
 
 1. Stop at basetemp again (the `44d295e` behaviour). 2. `chmod(0o755)` instead of `mode | S_IXOTH`. 3. Skip the restore.
 
-## Item 1 r2 — the `finally` unlink only-on-success mutant survives at `44d295e`
+## Item 1 r2: the `finally` unlink only-on-success mutant survives at `44d295e`
 
 ### Symptom
 
@@ -341,3 +341,28 @@ Host mutants: `/tmp/fs4-verify/mutate.py` (anchor must match once, file copied a
 | 5 | parent-side child dir cleanup removed | in-image root | killed, `test_unprivileged_child_leaves_no_upload_dirs`; 57 dirs left |
 
 11 mutants, 11 killed, every file restored byte-equal (sha256 `352a6d5f94a9…` for `app.py`, `50e3f8510aa4…` for `tests/test_field_image.py`). The earlier `_open_up_dirs ignores stop` mutant no longer applies: that helper is gone.
+
+## Round 3 (Reviewer FAIL at `a7d2e06`, 2026-10-23)
+
+Verdict: two MUSTs in the root-only test harness, five should-fixes. Production `src/` has no chmod, fork, or setuid.
+
+### R3 M1: the child cleanup deletes `fieldshow-*` dirs this run did not create
+
+- Symptom: as root with a shared TMPDIR, a uid 65534 `fieldshow-*` dir (with a payload) created by another process while the child ran was deleted.
+- Where: `tests/test_field_image.py` `_run_as_nobody` (lines 175-180) and `_nobody_temp_dirs` (190-195) at `a7d2e06`.
+- Root cause: the child builds apps in the shared `tempfile.gettempdir()`, so the parent cannot tell its dirs from anyone else's. It guesses by owner, prefix, and a before/after diff. Any matching dir that appears during the window looks like the child's and is removed.
+- Planned fix: the parent makes a private dir under `tmp_path`, chowns it to 65534, and the child points `TMPDIR` and `tempfile.tempdir` at it after the uid drop. The parent removes only that dir. Nothing in the shared TMPDIR is scanned or removed.
+- Planned test (root only): a parent thread plants a nobody-owned `fieldshow-*` sibling with a payload in the shared TMPDIR while the child is inside its check (pipe handshake, no sleeps). The sibling and payload must survive. Red on `a7d2e06`.
+- Planned mutant: put back a sweep of every nobody `fieldshow-*` in the shared TMPDIR after the child. Must die.
+
+### R3 M2: the o+x walk goes up to `/`, and a killed pytest leaves modes widened and the child running
+
+- Symptom: with `--basetemp` or TMPDIR under a home or repo dir, `kill -9` of pytest mid-child left 750 -> 751 and 700 -> 701 on dirs pytest did not create, and the uid 65534 child kept running, re-parented.
+- Where: `_reachable_by_others` (lines 127-138) and `_fork_as_nobody` at `a7d2e06`.
+- Root cause: two gaps. The walk has no upper bound, so it widens any ancestor. The restore lives in a `finally` in the pytest process, so SIGKILL skips it, and the child has no tie to the parent's life.
+- Planned fix:
+  - Bound the walk at pytest's own temp root: `pytest-of-<user>` when pytest made it, else the `--basetemp` dir. If any dir above that root lacks `o+x`, `pytest.skip` with the dir named, and change nothing.
+  - Before widening, fork a guardian (own session) that holds the read end of a pipe. When the pipe closes for any reason, including pytest being SIGKILLed, it SIGKILLs the child if it was not reaped and puts the modes back.
+  - The child sets `PR_SET_PDEATHSIG` to SIGKILL via `ctypes` `prctl`, after `setuid` (a credential change clears it), and exits if the parent is already gone.
+- Planned tests: the bound skips and changes no mode; a kill -9 simulation runs pytest in a subprocess with `--basetemp` under a home-like tree, SIGKILLs it mid-child, and asserts every mode is back and the child is gone; a planted 0750 "home" above the root makes the probe skip with no mode change.
+- Planned mutants: unbounded walk; no guardian; no `PR_SET_PDEATHSIG`; `_CHILD_WAIT_SECONDS = 10**9`.
