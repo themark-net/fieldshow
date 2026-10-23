@@ -59,6 +59,43 @@ No production edit. The `finally` unlink was already correct. The assertions are
 | 3 | `_wait_child` is `os.waitpid(pid, 0)` again | `test_wait_child_kills_a_hung_child_within_the_timeout` failed at the 10s join | `ac1e4b36021ef2af04c08b580eac19d0b529da3decbca207f2fc0e35d91ebb6b` | same |
 | 4 | Early client-suffix check removed, sniff left in place | `test_disallowed_suffix_is_415_before_anything_is_written` PNG + 300-char suffix returned 200 `images/field.png`. Junk + long suffix stayed 415. `evil.exe` + PNG bytes also returned 200 | `0c588aa4defc5af929715774b23b93621e9734e48bd4c3123b70f508de4e30c5` | same |
 
+## Item 5 — `/tmp/fieldshow-*` leak
+
+### Symptom
+
+Every `create_app` call leaves a directory under the temp dir. Nothing removes it. The baseline suite (98 passed, 2 skipped) moved `/tmp/fieldshow-*` from 435 to 510, delta 75. Pre-existing directories were not deleted.
+
+### Where
+
+`src/fieldshow/web/app.py:66`:
+
+```python
+app.state.assets = Path(tempfile.mkdtemp(prefix="fieldshow-"))
+```
+
+There is no shutdown hook and no finalizer.
+
+### Hypothesis
+
+`tempfile.mkdtemp` creates the directory and returns. The `FastAPI` instance is the only owner. When the test drops the client, or the process exits, nothing calls `rmtree`. One directory per call, including the ones `TestClient` builds. A finalizer registered on the app runs when the app is collected and again for leftovers at interpreter exit, which covers both an in-process `gc.collect()` and a subprocess that just exits.
+
+### Planned surgical fix
+
+Right after `mkdtemp`, `weakref.finalize(app, shutil.rmtree, path, True)`. The callback does not reference the app. `ignore_errors=True` so a second cleanup is quiet. No lifespan handler: these tests build the app and never run ASGI shutdown.
+
+### Planned test
+
+(a) `create_app()`, remember `app.state.assets`, `del` the app, `gc.collect()`. The directory is gone.
+
+(b) A subprocess with `TMPDIR` set to the test's `tmp_path` imports `create_app`, calls it, and exits 0. `tmp_path.glob("fieldshow-*")` is empty.
+
+After the fix, one full suite does not increase the count of `/tmp/fieldshow-*`. Existing directories stay.
+
+### Planned mutant
+
+Remove the `weakref.finalize` line. (a) still sees the directory after `gc.collect()`. (b) still sees `fieldshow-*` under `TMPDIR`.
+
+
 ## Item 2 — extensionless upload and magic bytes
 
 ### Symptom
