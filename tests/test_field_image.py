@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -125,6 +126,13 @@ def _open_up_dirs(tmp_path: Path, stop: Path) -> None:
             break
 
 
+@contextlib.contextmanager
+def _reachable_by_others(tmp_path: Path):
+    """Let another uid reach ``tmp_path`` while the block runs."""
+    _open_up_dirs(tmp_path, tmp_path.parent)
+    yield
+
+
 def _wait_child(pid: int, timeout: float) -> int:
     """Wait until ``pid`` exits. After ``timeout`` seconds, SIGKILL it and raise."""
     deadline = time.monotonic() + timeout
@@ -152,11 +160,14 @@ def _unprivileged(tmp_path: Path, check) -> None:
     if os.geteuid() != 0:
         check()
         return
-    # tmp_path.parent is pytest's basetemp for this fixture.
-    _open_up_dirs(tmp_path, tmp_path.parent)
     for path in tmp_path.rglob("*"):
         if path.is_dir() and not path.is_symlink() and path.name != "dir.png":
             path.chmod(0o755)
+    with _reachable_by_others(tmp_path):
+        _run_as_nobody(check)
+
+
+def _run_as_nobody(check) -> None:
     pid = os.fork()
     if pid == 0:
         code = 1
