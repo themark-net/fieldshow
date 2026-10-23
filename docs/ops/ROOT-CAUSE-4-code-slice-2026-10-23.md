@@ -95,6 +95,19 @@ After the fix, one full suite does not increase the count of `/tmp/fieldshow-*`.
 
 Remove the `weakref.finalize` line. (a) still sees the directory after `gc.collect()`. (b) still sees `fieldshow-*` under `TMPDIR`.
 
+### Red-first evidence
+
+```
+PYTHONPATH=src /home/mark/DEVELOP/fieldshow/.venv/bin/python -m pytest -q -p no:cacheprovider --tb=short \
+  tests/test_web.py::test_assets_dir_is_removed_when_the_app_is_collected \
+  tests/test_web.py::test_process_exit_removes_the_assets_dir
+```
+
+`2 failed`.
+
+- After `del app` and `gc.collect()`, `/tmp/fieldshow-u8nuh5n_` still existed.
+- The subprocess left `fieldshow-fcq2trmi` under its `TMPDIR`.
+
 
 ## Item 2 — extensionless upload and magic bytes
 

@@ -1,5 +1,9 @@
 """Integrated server: one show, music, drill, and design on one page."""
 
+import gc
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -38,3 +42,27 @@ def test_page_and_frame_share_one_show(tmp_path: Path):
     picture = client.get("/api/field-image")
     assert picture.status_code == 200
     assert picture.content.startswith(b"\x89PNG")
+
+
+def test_assets_dir_is_removed_when_the_app_is_collected():
+    app = create_app()
+    assets = Path(app.state.assets)
+    assert assets.is_dir()
+    assert assets.name.startswith("fieldshow-")
+    del app
+    gc.collect()
+    assert not assets.exists()
+
+
+def test_process_exit_removes_the_assets_dir(tmp_path: Path):
+    env = os.environ.copy()
+    env["TMPDIR"] = str(tmp_path)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    run = subprocess.run(
+        [sys.executable, "-c", "from fieldshow.web.app import create_app; create_app()"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    assert list(tmp_path.glob("fieldshow-*")) == []
