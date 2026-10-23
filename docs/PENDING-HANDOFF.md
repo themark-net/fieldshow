@@ -1,5 +1,7 @@
 # Pending handoff, 2026-10-22
 
+#4 code slice is on `build/4-code-slice` (worktree `tmp/4-code-slice`, not pushed, no PR), from `origin/main` `645a388`. Upload scratch files are asserted gone, `/api/image` sniffs magic bytes and rejects a bad client suffix before writing, `_unprivileged` no longer chmods above the pytest basetemp and will not wait forever on a child, and `create_app` removes its `fieldshow-*` temp dir. Three full runs: `119 passed, 2 skipped`, and `/tmp/fieldshow-*` did not grow. The field image is still not drawn. See [ops/HANDOFF-4-code-slice-2026-10-23.md](ops/HANDOFF-4-code-slice-2026-10-23.md).
+
 T-0005 is implemented on branch `build/t0005-part-pdfs` (pushed to origin; fast-forwarded to main at `a803da2`). Implemented headless by Grok Build on nimo in a worktree under `tmp/`, then verified independently.
 
 #3 (field_image path restriction) passed Tester and Reviewer at `e786df3` and was fast-forwarded to main there (branch `build/3-field-image`). See [ops/HANDOFF-3-field-image-2026-10-22.md](ops/HANDOFF-3-field-image-2026-10-22.md).
