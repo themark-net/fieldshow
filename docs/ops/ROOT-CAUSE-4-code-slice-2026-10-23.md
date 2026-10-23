@@ -311,3 +311,33 @@ After items 2 and 4, every body that reaches the scratch write is a sniffed imag
 ### Planned test
 
 `test_scratch_is_removed_when_import_fails_after_the_write`: monkeypatch `fieldshow.web.app.import_image` to raise `ValueError`, upload a real PNG, expect 415, show unchanged, no `upload*` in assets. This is the handler's cleanup contract for any later failure after the write. No production change.
+
+## Verification pass r2 (2026-10-23, after `44d295e`)
+
+### Red-first evidence
+
+- **Item 3 r2, end to end.** In-image pytest as root at `44d295e`: `56 failed, 63 passed, 2 skipped`, every `_unprivileged` case `check failed as uid 65534`. `/tmp/pytest-of-root` was `drwx------`.
+- **Item 3 r2, host.** `test_reachable_by_others_adds_only_search_and_restores` against the wrapped old helper (`a16fb29`): `1 failed` with `no o+x on [.../above, .../test_reachable_by_others_adds_0, /tmp/pytest-of-mark/pytest-821, /tmp/pytest-of-mark]`.
+- **Item 1 r2.** `test_scratch_is_removed_when_import_fails_after_the_write` passes on the real handler and fails under the only-on-success mutant. Before it, that mutant survived at `44d295e` (`85 passed`).
+- **Root-run upload dirs.** After the chmod fix the in-image root run was green but left 56 `fieldshow-*` dirs owned by uid 65534 (the child exits via `os._exit`, so the finalizer never runs there). `test_unprivileged_child_leaves_no_upload_dirs` (root only) was added with the parent-side cleanup in `14c8008`/`f9a14d1`; its red evidence is the in-image mutant below, not a pre-fix run.
+- **All fixes reverted at once.** HEAD tests on `origin/main`'s `app.py`: `16 failed, 72 passed` (sniff, suffix and temp-dir tests). On `origin/main` code a 306-character filename returns **500** for PNG and junk bodies, and an extensionless `notes` text upload returns 200.
+
+### Mutation proof r2 (final head)
+
+Host mutants: `/tmp/fs4-verify/mutate.py` (anchor must match once, file copied aside, edited, targeted tests run, copied back, sha256 and `git diff --quiet` checked). In-image mutants: same copy/restore by hand around `tmp/4-code-slice.inimage.sh`.
+
+| Item | Mutant | Where run | Result |
+| --- | --- | --- | --- |
+| 1 | delete `finally` unlink | host | killed, 10 failed |
+| 1 | unlink only in `else` | host | killed, 1 failed (`..._when_import_fails_after_the_write`) |
+| 2 | client suffix again, no sniff | host | killed, 12 failed |
+| 3 | `_wait_child` blocks in `waitpid(pid, 0)` | host | killed, hang test fails at 10s join |
+| 3 | stop ancestor walk at the first parent (basetemp) | host | killed, `no o+x` on `/tmp/pytest-of-mark` and above |
+| 3 | `chmod(0o755)` instead of `mode \| S_IXOTH` | host | killed, `above` is `0o755` |
+| 3 | skip the restore | host | killed, modes differ after the block |
+| 3 | stop ancestor walk at the first parent | in-image root | killed, 58 failed |
+| 4 | early suffix check removed | host | killed, 2 failed |
+| 5 | `weakref.finalize` removed | host | killed, 2 failed |
+| 5 | parent-side child dir cleanup removed | in-image root | killed, `test_unprivileged_child_leaves_no_upload_dirs`; 57 dirs left |
+
+11 mutants, 11 killed, every file restored byte-equal (sha256 `352a6d5f94a9…` for `app.py`, `50e3f8510aa4…` for `tests/test_field_image.py`). The earlier `_open_up_dirs ignores stop` mutant no longer applies: that helper is gone.
