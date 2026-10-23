@@ -55,6 +55,8 @@ No production edit. The `finally` unlink was already correct. The assertions are
 | 1 | Delete the `finally` unlink | `test_upload_is_stored_as_a_marker_and_served` (left `upload.png`), `test_non_image_upload_is_415_and_leaves_the_show` (left `upload.exe`) | `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` | same |
 | 1 | Unlink only in `else` (success path) | `test_non_image_upload_is_415_and_leaves_the_show` left `upload.exe`. The success test stayed green | `956f2372708c2ddb5028b6649ab29db0c864ec623979beb4fa82c067b165128f` | same |
 | 2 | Handler uses `Path(filename).suffix or ".png"` again and does not sniff | `test_upload_rejects_bytes_that_are_not_an_image` (`notes`, `fake.png` returned 200) and `test_upload_stores_the_sniffed_type` (`photo.png` stored `images/field.png`). 12 failed, 1 passed | `9d004ff0be46b014d8a37999c38848fadbb796153b19eeaf741640065a8330a7` | same |
+| 3 | `_open_up_dirs` ignores `stop` and walks to `/` or `/tmp` | `test_open_up_dirs_stops_at_the_scoped_root`: `above` is `0o755` | `ac1e4b36021ef2af04c08b580eac19d0b529da3decbca207f2fc0e35d91ebb6b` | same |
+| 3 | `_wait_child` is `os.waitpid(pid, 0)` again | `test_wait_child_kills_a_hung_child_within_the_timeout` failed at the 10s join | `ac1e4b36021ef2af04c08b580eac19d0b529da3decbca207f2fc0e35d91ebb6b` | same |
 
 ## Item 2 — extensionless upload and magic bytes
 
